@@ -212,7 +212,10 @@ class Settings:
     schedule_team: str = "Alabama"
     schedule_season: int = 0
     schedule_show_logos: bool = True
+    schedule_show_opp_logos: bool = False
     schedule_show_scores: bool = True
+    schedule_show_ha_col: bool = False
+    schedule_show_time: bool = True
     schedule_show_summary: bool = True
     schedule_show_timestamp: bool = False
     schedule_use_team_colors: bool = False
@@ -224,6 +227,7 @@ class Settings:
     schedule_append_timestamp: bool = True
     game_record_series_detail: str = "result_only"
     game_record_show_logos: bool = True
+    game_record_show_opp_logos: bool = False
     game_record_show_summary: bool = True
     game_record_show_timestamp: bool = False
     game_record_show_col_explainers: bool = False

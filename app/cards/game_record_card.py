@@ -19,8 +19,11 @@ class GameRecordCardConfig(CardConfig):
     date_sort: str        = "desc"
     team: str             = ""
     use_team_colors: bool = False
-    show_week: bool       = False   # show WK column (auto-enabled in full_season mode)
-    show_scores: bool     = True    # show score column; hide for spoiler-free schedule
+    show_week: bool       = False
+    show_scores: bool     = True
+    show_ha_col: bool     = True
+    show_time: bool       = True
+    show_opp_logos: bool  = False
 
     title_bg: str      = "#1a3a5c"
     title_fg: str      = "#FFFFFF"
@@ -38,10 +41,17 @@ class GameRecordCardConfig(CardConfig):
 
 _COLS_BASE        = ["DATE", "OPP", "H/A", "RESULT", "SCORE"]
 _COLS_WITH_WK     = ["WK", "DATE", "OPP", "H/A", "TIME", "RESULT", "SCORE"]
-_COL_FRACS_BASE   = {"DATE": 0.18, "OPP": 0.38, "H/A": 0.10, "RESULT": 0.12, "SCORE": 0.22}
-_COL_FRACS_WK     = {"WK": 0.06, "DATE": 0.15, "OPP": 0.29, "H/A": 0.08, "TIME": 0.14, "RESULT": 0.10, "SCORE": 0.18}
-_COL_FRACS_NO_SCR = {"DATE": 0.22, "OPP": 0.50, "H/A": 0.12, "RESULT": 0.16}
-_COL_FRACS_WK_NO_SCR = {"WK": 0.07, "DATE": 0.17, "OPP": 0.36, "H/A": 0.09, "TIME": 0.15, "RESULT": 0.16}
+_COLS_BASE_NOHA   = ["DATE", "OPP", "RESULT", "SCORE"]
+_COLS_WK_NOHA     = ["WK", "DATE", "OPP", "TIME", "RESULT", "SCORE"]
+_COL_FRACS_BASE       = {"DATE": 0.18, "OPP": 0.38, "H/A": 0.10, "RESULT": 0.12, "SCORE": 0.22}
+_COL_FRACS_WK         = {"WK": 0.06, "DATE": 0.15, "OPP": 0.29, "H/A": 0.08, "TIME": 0.14, "RESULT": 0.10, "SCORE": 0.18}
+_COL_FRACS_NO_SCR     = {"DATE": 0.22, "OPP": 0.50, "H/A": 0.12, "RESULT": 0.16}
+_COL_FRACS_WK_NO_SCR  = {"WK": 0.07, "DATE": 0.17, "OPP": 0.36, "H/A": 0.09, "TIME": 0.15, "RESULT": 0.16}
+# No H/A column variants — OPP gets the extra space
+_COL_FRACS_NOHA       = {"DATE": 0.20, "OPP": 0.46, "RESULT": 0.12, "SCORE": 0.22}
+_COL_FRACS_WK_NOHA    = {"WK": 0.06, "DATE": 0.15, "OPP": 0.37, "TIME": 0.14, "RESULT": 0.10, "SCORE": 0.18}
+_COL_FRACS_NOHA_NOSCR = {"DATE": 0.24, "OPP": 0.60, "RESULT": 0.16}
+_COL_FRACS_WK_NOHA_NOSCR={"WK":0.07,"DATE":0.18,"OPP":0.44,"TIME":0.15,"RESULT":0.16}
 _CELL_PAD   = 6
 _TITLE_PCT  = 0.10
 _HEADER_PCT = 0.065
@@ -115,7 +125,7 @@ class GameRecordCardRenderer:
         for i, game in enumerate(block.games):
             row_bg = self._row_bg(game, config, i)
             draw.rectangle([0, y, W - 1, y + row_h - 1], fill=row_bg)
-            self._draw_row(draw, game, cols, col_widths, config, y, row_h)
+            self._draw_row(draw, img, game, cols, col_widths, config, y, row_h, working_dir)
             draw.line([(0, y + row_h - 1), (W - 1, y + row_h - 1)],
                       fill=config.divider_color, width=1)
             y += row_h
@@ -130,18 +140,28 @@ class GameRecordCardRenderer:
     # ------------------------------------------------------------------
 
     def _cols(self, config: GameRecordCardConfig) -> list[str]:
-        base = _COLS_WITH_WK if config.show_week else _COLS_BASE
+        if config.show_week:
+            base = _COLS_WK_NOHA if not config.show_ha_col else _COLS_WITH_WK
+        else:
+            base = _COLS_BASE_NOHA if not config.show_ha_col else _COLS_BASE
         if not config.show_scores:
-            return [c for c in base if c != "SCORE"]
+            base = [c for c in base if c != "SCORE"]
+        if not config.show_time:
+            base = [c for c in base if c != "TIME"]
         return base
 
     def _col_widths(self, total_w: int, cols: list[str]) -> list[int]:
-        use_wk  = "WK" in cols
-        use_scr = "SCORE" in cols
-        if use_wk and use_scr:   fracs = _COL_FRACS_WK
-        elif use_wk:             fracs = _COL_FRACS_WK_NO_SCR
-        elif not use_scr:        fracs = _COL_FRACS_NO_SCR
-        else:                    fracs = _COL_FRACS_BASE
+        use_wk   = "WK" in cols
+        use_scr  = "SCORE" in cols
+        use_ha   = "H/A" in cols
+        if use_wk and use_scr and use_ha:     fracs = _COL_FRACS_WK
+        elif use_wk and use_scr:              fracs = _COL_FRACS_WK_NOHA
+        elif use_wk and use_ha:              fracs = _COL_FRACS_WK_NO_SCR
+        elif use_wk:                         fracs = _COL_FRACS_WK_NOHA_NOSCR
+        elif use_scr and use_ha:             fracs = _COL_FRACS_BASE
+        elif use_scr:                        fracs = _COL_FRACS_NOHA
+        elif use_ha:                         fracs = _COL_FRACS_NO_SCR
+        else:                                fracs = _COL_FRACS_NOHA_NOSCR
         widths = [round(total_w * fracs.get(c, 0.10)) for c in cols]
         widths[-1] += total_w - sum(widths)
         return widths
@@ -221,17 +241,27 @@ class GameRecordCardRenderer:
             return config.tie_bg
         return config.row_color if idx % 2 == 0 else config.row_alt_color
 
-    def _draw_row(self, draw, game: GameResult, cols, col_widths, config, y, row_h):
+    def _draw_row(self, draw, img, game: GameResult, cols, col_widths, config, y, row_h, working_dir):
         font_sz = max(7, round(row_h * 0.48))
         font    = get_font(font_sz)
         font_b  = get_font(font_sz, bold=True)
         xs      = self._col_xs(col_widths)
 
         is_upcoming = game.team_score is None
+        # Opponent name: prefix with @/vs when H/A column is hidden
+        if not config.show_ha_col:
+            if game.is_neutral:
+                opp_display = f"vs {game.opponent}"
+            elif not game.is_home:
+                opp_display = f"@ {game.opponent}"
+            else:
+                opp_display = game.opponent
+        else:
+            opp_display = game.opponent
         values = {
             "WK":     str(game.week) if game.week else "",
             "DATE":   game.date.strftime("%b %d") if game.date else f"Wk {game.week}",
-            "OPP":    game.opponent,
+            "OPP":    opp_display,
             "H/A":    "N" if game.is_neutral else ("H" if game.is_home else "A"),
             "TIME":   _format_game_time(game),
             "RESULT": game.result if game.result else ("▶" if is_upcoming else "—"),
@@ -255,10 +285,19 @@ class GameRecordCardRenderer:
 
             if col == "OPP":
                 tx = col_x + _CELL_PAD
+                # Opponent logo
+                if config.show_opp_logos:
+                    from app.data.logo_cache import get_logo, slugify
+                    logo_sz = max(10, row_h - 4)
+                    logo = get_logo(slugify(game.opponent), logo_sz, working_dir)
+                    if logo:
+                        ly = y + (row_h - logo_sz) // 2
+                        img.paste(logo, (tx, ly), logo)
+                        tx += logo_sz + _CELL_PAD
+                draw.text((tx, ty), val, font=use_font, fill=color)
             else:
                 tx = col_x + (col_w - tw) // 2
-
-            draw.text((tx, ty), val, font=use_font, fill=color)
+                draw.text((tx, ty), val, font=use_font, fill=color)
             if i > 0:
                 draw.line([(col_x, y), (col_x, y + row_h - 1)],
                           fill=config.divider_color, width=1)

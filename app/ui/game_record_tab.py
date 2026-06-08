@@ -127,7 +127,9 @@ class GameRecordTab(ttk.Frame):
         self._show_summary_var  = tk.BooleanVar(value=True)
         self._show_ts_var       = tk.BooleanVar(value=False)
         self._use_team_colors_var = tk.BooleanVar(value=False)
+        self._show_opp_logos_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(lf, text="Show team logo",          variable=self._show_logo_var).pack(anchor="w", padx=8, pady=1)
+        ttk.Checkbutton(lf, text="Show opponent logos",     variable=self._show_opp_logos_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Show W-L summary",        variable=self._show_summary_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Use team colors",         variable=self._use_team_colors_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Show timestamp",          variable=self._show_ts_var).pack(anchor="w", padx=8, pady=(1,4))
@@ -291,6 +293,7 @@ class GameRecordTab(ttk.Frame):
             use_team_colors=self._use_team_colors_var.get(),
             show_week=False,
             show_scores=True,
+            show_opp_logos=self._show_opp_logos_var.get(),
             team=team,
         )
         if cfg.use_team_colors and team:
@@ -319,6 +322,7 @@ class GameRecordTab(ttk.Frame):
         self._sort_var.set(s.game_record_date_sort)
         self._season_type_var.set(getattr(s, "game_record_season_type", "both"))
         self._show_logo_var.set(s.game_record_show_logos)
+        self._show_opp_logos_var.set(s.game_record_show_opp_logos)
         self._show_summary_var.set(s.game_record_show_summary)
         self._show_ts_var.set(s.game_record_show_timestamp)
         self._use_team_colors_var.set(s.game_record_use_team_colors)
@@ -338,6 +342,7 @@ class GameRecordTab(ttk.Frame):
         s.game_record_date_sort        = self._sort_var.get()
         s.game_record_season_type      = self._season_type_var.get()
         s.game_record_show_logos       = self._show_logo_var.get()
+        s.game_record_show_opp_logos   = self._show_opp_logos_var.get()
         s.game_record_show_summary     = self._show_summary_var.get()
         s.game_record_show_timestamp   = self._show_ts_var.get()
         s.game_record_use_team_colors  = self._use_team_colors_var.get()

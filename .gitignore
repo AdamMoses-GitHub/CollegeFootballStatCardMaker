@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+*.spec
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+.conda/
+
+# Distribution / packaging
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing / coverage
+.tox/
+.coverage
+.coverage.*
+.cache
+htmlcov/
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test output images
+test_*.png
+test_*.jpg
+
+# API keys / secrets
+.env
+*.env
+secrets.py
+
+# Logs
+*.log
+
+# Pillow / image cache
+logo_cache/
+*.cache
