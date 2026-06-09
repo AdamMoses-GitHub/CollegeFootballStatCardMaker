@@ -5,6 +5,7 @@ Conference logos: https://a.espncdn.com/i/teamlogos/ncaa_conf/500/{conf_id}.png
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -12,7 +13,7 @@ import unicodedata
 from typing import Optional
 
 import requests
-from PIL import Image
+from PIL import Image, ImageDraw
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ TEAM_ESPN_ID_MAP: dict[str, int] = {
     "marshall":         276,
     "old_dominion":     295,
     "south_alabama":    6,
-    "southern_miss":    235,
+    "southern_miss":    2572,
     "texas_state":      326,
     "troy":             2653,
     # MAC
@@ -215,6 +216,110 @@ _ESPN_BASE = "https://a.espncdn.com/i/teamlogos/ncaa/500/{espn_id}.png"
 # In-memory PIL image cache to avoid re-opening the same file repeatedly
 _mem_cache: dict[str, Image.Image] = {}
 
+# CFBD API key — set once at startup via set_api_key()
+_cfbd_api_key: str = ""
+
+
+def set_api_key(key: str) -> None:
+    """Store the CFBD API key used for dynamic ESPN ID lookups."""
+    global _cfbd_api_key
+    _cfbd_api_key = key or ""
+
+
+# ---------------------------------------------------------------------------
+# Dynamic ESPN ID cache (JSON on disk)
+# ---------------------------------------------------------------------------
+
+def _id_cache_path(working_dir: str) -> str:
+    return os.path.join(working_dir, "logos", "espn_id_cache.json")
+
+
+def _load_id_cache(working_dir: str) -> dict[str, int]:
+    path = _id_cache_path(working_dir)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return {k: int(v) for k, v in data.items()}
+    except Exception:
+        return {}
+
+
+def _save_id_cache(working_dir: str, cache: dict[str, int]) -> None:
+    path = _id_cache_path(working_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(cache, fh, indent=2, sort_keys=True)
+    except Exception:
+        logger.debug("Could not write ESPN ID cache to %s", path)
+
+
+def _lookup_espn_id_dynamic(original_name: str, slug: str, working_dir: str) -> Optional[int]:
+    """Query cfbd for a team's ESPN ID and persist the result to the JSON cache.
+
+    Returns the ESPN ID on success, None otherwise.
+    """
+    if not _cfbd_api_key:
+        return None
+
+    id_cache = _load_id_cache(working_dir)
+    if slug in id_cache:
+        return id_cache[slug]
+
+    try:
+        import cfbd
+        configuration = cfbd.Configuration()
+        configuration.access_token = _cfbd_api_key
+        client = cfbd.ApiClient(configuration)
+        teams_api = cfbd.TeamsApi(client)
+        results = teams_api.get_teams(search=original_name) or []
+        for team in results:
+            raw_id = getattr(team, "espn_id", None)
+            if raw_id is not None:
+                espn_id = int(raw_id)
+                id_cache[slug] = espn_id
+                _save_id_cache(working_dir, id_cache)
+                logger.info("Dynamically resolved ESPN ID %d for %r", espn_id, original_name)
+                return espn_id
+    except Exception:
+        logger.debug("Dynamic ESPN ID lookup failed for %r", original_name)
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Initials placeholder
+# ---------------------------------------------------------------------------
+
+def _make_placeholder(abbrev: str, size_px: int) -> Image.Image:
+    """Return a gray square with team initials — used when no logo is available."""
+    from app.utils.font_manager import get_font
+
+    words = re.split(r"[\s_\-]+", abbrev.strip())
+    initials = "".join(w[0].upper() for w in words if w)[:3]
+    if not initials:
+        initials = abbrev[:2].upper() or "?"
+
+    img = Image.new("RGBA", (size_px, size_px), (160, 160, 160, 255))
+    draw = ImageDraw.Draw(img)
+
+    font_size = max(8, size_px // (2 if len(initials) <= 2 else 3))
+    try:
+        font = get_font(font_size, bold=True)
+    except Exception:
+        from PIL import ImageFont
+        font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), initials, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    x = (size_px - tw) // 2 - bbox[0]
+    y = (size_px - th) // 2 - bbox[1]
+    draw.text((x, y), initials, fill=(255, 255, 255, 255), font=font)
+    return img
+
 
 def slugify(name: str) -> str:
     """Normalise a team name to a lowercase underscore slug for map lookups.
@@ -264,13 +369,18 @@ def get_logo(abbrev: str, size_px: int, working_dir: str) -> Optional[Image.Imag
 
     # Download if not cached on disk
     if not os.path.exists(path):
+        # 1. Static map
         espn_id = TEAM_ESPN_ID_MAP.get(slug)
+        # 2. Dynamic cfbd lookup (FCS / unknown teams)
         if espn_id is None:
-            logger.debug("No ESPN ID for team slug: %s (from %r)", slug, abbrev)
-            return None
+            espn_id = _lookup_espn_id_dynamic(abbrev, slug, working_dir)
+        # 3. Initials placeholder when no ESPN ID is available
+        if espn_id is None:
+            logger.debug("No ESPN ID found for %r — using placeholder", abbrev)
+            return _make_placeholder(abbrev, size_px)
         url = _ESPN_BASE.format(espn_id=espn_id)
         if not _download(url, path):
-            return None
+            return _make_placeholder(abbrev, size_px)
 
     # Open from disk
     try:

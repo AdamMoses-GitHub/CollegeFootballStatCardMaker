@@ -37,6 +37,7 @@ class GameResult:
     notes: str       # bowl game name if applicable
     start_time_utc: datetime.datetime | None = None
     time_tbd: bool = True
+    is_bye: bool = False
 
 
 @dataclass
@@ -170,6 +171,10 @@ def fetch_game_record(
     if mode == "last_n":
         results = results[:n]
 
+    # In full_season mode insert synthetic bye-week rows for week gaps
+    if mode == "full_season":
+        results = _insert_bye_weeks(results, effective_season)
+
     return GameRecordBlock(
         team=team,
         season=effective_season,
@@ -183,6 +188,48 @@ def fetch_game_record(
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
+
+
+def _insert_bye_weeks(results: list[GameResult], season: int) -> list[GameResult]:
+    """Insert synthetic bye-week entries for any missing regular-season weeks.
+
+    Only considers weeks 1–15 (regular season). Postseason games (bowl, playoff)
+    have week numbers in the 20s and are left untouched.
+    """
+    if not results:
+        return results
+
+    regular = [g for g in results if 1 <= g.week <= 15]
+    other   = [g for g in results if g.week < 1 or g.week > 15]
+
+    if len(regular) < 2:
+        return results
+
+    first_week = regular[0].week
+    last_week  = regular[-1].week
+    weeks_seen = {g.week for g in regular}
+
+    byes: list[GameResult] = []
+    for wk in range(first_week, last_week + 1):
+        if wk not in weeks_seen:
+            byes.append(GameResult(
+                season=season,
+                week=wk,
+                date=None,
+                opponent="BYE",
+                is_home=False,
+                is_neutral=False,
+                team_score=None,
+                opp_score=None,
+                result="",
+                notes="",
+                time_tbd=False,
+                is_bye=True,
+            ))
+
+    combined = regular + byes + other
+    combined.sort(key=lambda r: (r.week or 99, r.date or datetime.datetime.min))
+    return combined
 
 _cache: dict[tuple, tuple[datetime.datetime, GameRecordBlock]] = {}
 

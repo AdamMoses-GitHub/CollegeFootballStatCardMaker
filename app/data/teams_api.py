@@ -56,6 +56,8 @@ def fetch_fbs_teams(api_key: str) -> list[TeamInfo]:
             color=t.color or "#1a3a5c",
             alt_color=t.alternate_color or "#2c5f8a",
         ))
+    _cache = teams
+    _cache_ts = datetime.datetime.now()
     return teams
 
 

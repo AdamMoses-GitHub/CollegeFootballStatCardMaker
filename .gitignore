@@ -56,8 +56,9 @@ test_*.jpg
 *.env
 secrets.py
 
-# Logs
-*.log
+# Debug / diagnostic scripts
+debug_*.py
+
 
 # Pillow / image cache
 logo_cache/

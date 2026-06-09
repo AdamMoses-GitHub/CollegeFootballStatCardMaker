@@ -56,6 +56,7 @@ class SettingsTab(ttk.Frame):
         self._build_data_cache(parent)
         self._build_col_explainer_sep(parent)
         self._build_export_margin(parent)
+        self._build_timezone(parent)
         self._build_api_key(parent)
         self._build_log_section(parent)
 
@@ -154,19 +155,23 @@ class SettingsTab(ttk.Frame):
         lf = ttk.LabelFrame(parent, text="Export DPI")
         lf.pack(fill="x", padx=8, pady=4)
 
-        row = ttk.Frame(lf)
-        row.pack(fill="x", padx=8, pady=6)
-
         self._dpi_var = tk.IntVar()
-        for dpi_val in (72, 150, 300, 600, 900, 1200, 1500, 1800):
+        row1 = ttk.Frame(lf)
+        row1.pack(fill="x", padx=8, pady=(6, 2))
+        for dpi_val in (72, 150, 300, 600):
             ttk.Radiobutton(
-                row, text=str(dpi_val), variable=self._dpi_var, value=dpi_val
+                row1, text=str(dpi_val), variable=self._dpi_var, value=dpi_val
             ).pack(side="left", padx=4)
-
-        ttk.Label(row, text="  Custom:").pack(side="left")
+        row2 = ttk.Frame(lf)
+        row2.pack(fill="x", padx=8, pady=(0, 6))
+        for dpi_val in (900, 1200, 1500, 1800):
+            ttk.Radiobutton(
+                row2, text=str(dpi_val), variable=self._dpi_var, value=dpi_val
+            ).pack(side="left", padx=4)
+        ttk.Label(row2, text="  Custom:").pack(side="left")
         self._dpi_custom_var = tk.StringVar()
         ttk.Spinbox(
-            row, from_=72, to=1200, increment=50,
+            row2, from_=72, to=1800, increment=50,
             textvariable=self._dpi_custom_var, width=6,
             command=self._on_dpi_custom,
         ).pack(side="left", padx=(2, 0))
@@ -247,16 +252,23 @@ class SettingsTab(ttk.Frame):
         ).pack(anchor="w", padx=8, pady=(0, 6))
 
     def _clear_cache(self) -> None:
-        try:
-            from app.data.cfb_api import clear_standings_cache
-            clear_standings_cache()
-        except Exception:
-            pass
-        try:
-            from app.data.logo_cache import clear_logo_memory_cache
-            clear_logo_memory_cache()
-        except Exception:
-            pass
+        for module, fn in [
+            ("app.data.cfb_api",          "clear_standings_cache"),
+            ("app.data.logo_cache",        "clear_logo_memory_cache"),
+            ("app.data.game_record_api",   "clear_game_record_cache"),
+            ("app.data.matchup_api",       "clear_matchup_cache"),
+            ("app.data.roster_api",        "clear_roster_cache"),
+            ("app.data.career_api",        "clear_career_cache"),
+            ("app.data.rankings_api",      "clear_rankings_cache"),
+            ("app.data.playoffs_api",      "clear_playoffs_cache"),
+            ("app.data.teams_api",         "clear_teams_cache"),
+        ]:
+            try:
+                import importlib
+                mod = importlib.import_module(module)
+                getattr(mod, fn)()
+            except Exception:
+                pass
 
     # ---- 8.6 Column Explainer Separator --------------------------------
 
@@ -301,6 +313,26 @@ class SettingsTab(ttk.Frame):
 
     # ---- API Key section (CFB-specific) --------------------------------
 
+    def _build_timezone(self, parent: ttk.Frame) -> None:
+        lf = ttk.LabelFrame(parent, text="Display Timezone")
+        lf.pack(fill="x", padx=8, pady=4)
+        self._tz_var = tk.StringVar(value="ET")
+        row1 = ttk.Frame(lf)
+        row1.pack(fill="x", padx=8, pady=(6, 2))
+        for tz in ("ET", "CT", "MT", "PT"):
+            ttk.Radiobutton(row1, text=tz, variable=self._tz_var, value=tz).pack(side="left", padx=4)
+        row2 = ttk.Frame(lf)
+        row2.pack(fill="x", padx=8, pady=(0, 2))
+        for tz in ("AKT", "HT", "UTC"):
+            ttk.Radiobutton(row2, text=tz, variable=self._tz_var, value=tz).pack(side="left", padx=4)
+        ttk.Label(
+            lf,
+            text="Used for kickoff times on schedule and game record cards.",
+            foreground="#555555",
+        ).pack(anchor="w", padx=8, pady=(0, 6))
+
+    # ---- API Key section (CFB-specific) --------------------------------
+
     def _build_api_key(self, parent: ttk.Frame) -> None:
         lf = ttk.LabelFrame(
             parent, text="College Football Data API Key"
@@ -322,9 +354,9 @@ class SettingsTab(ttk.Frame):
 
         self._api_key_var = tk.StringVar()
         self._api_key_entry = ttk.Entry(
-            row, textvariable=self._api_key_var, width=70
+            row, textvariable=self._api_key_var
         )
-        self._api_key_entry.pack(side="left", padx=(0, 4))
+        self._api_key_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
 
         ttk.Button(
             row, text="Show/Hide", command=self._toggle_api_key_vis
@@ -439,6 +471,7 @@ class SettingsTab(ttk.Frame):
         self._cache_ttl_var.set(str(s.data_cache_ttl_minutes))
         self._col_sep_var.set(s.col_explainer_sep)
         self._margin_var.set(str(s.export_canvas_margin_pct))
+        self._tz_var.set(getattr(s, "display_timezone", "ET"))
         self._api_key_var.set(s.cfbd_api_key)
         self._update_size_orient()
         self._update_bg_swatch()
@@ -469,5 +502,8 @@ class SettingsTab(ttk.Frame):
             s.export_canvas_margin_pct = float(self._margin_var.get())
         except ValueError:
             pass
+        s.display_timezone = self._tz_var.get()
         s.cfbd_api_key = self._api_key_var.get().strip()
+        from app.data import logo_cache
+        logo_cache.set_api_key(s.cfbd_api_key)
         s.save(s.working_dir)

@@ -89,14 +89,22 @@ def fetch_roster(team: str, season: int, api_key: str) -> RosterBlock:
     api_client = cfbd.ApiClient(configuration)
     teams_api = cfbd.TeamsApi(api_client)
 
-    try:
-        raw = teams_api.get_roster(team=team, year=effective_season) or []
-    except Exception as exc:
-        logger.exception("cfbd API error fetching roster")
-        raise RuntimeError(f"API error: {exc}") from exc
+    raw = []
+    used_season = effective_season
+    for attempt_season in (effective_season, effective_season - 1):
+        try:
+            raw = teams_api.get_roster(team=team, year=attempt_season) or []
+        except Exception as exc:
+            logger.exception("cfbd API error fetching roster")
+            raise RuntimeError(f"API error: {exc}") from exc
+        if raw:
+            used_season = attempt_season
+            break
 
     if not raw:
-        raise RuntimeError(f"No roster data found for {team} in {effective_season}.")
+        raise RuntimeError(
+            f"No roster data found for {team} in {effective_season} or {effective_season - 1}."
+        )
 
     players = []
     for p in raw:
@@ -128,7 +136,7 @@ def fetch_roster(team: str, season: int, api_key: str) -> RosterBlock:
 
     return RosterBlock(
         team=team,
-        season=effective_season,
+        season=used_season,
         as_of=datetime.datetime.now(),
         players=players,
     )

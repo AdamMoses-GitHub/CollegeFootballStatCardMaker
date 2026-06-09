@@ -38,9 +38,8 @@ class RankingsTab(ttk.Frame):
         pw = ttk.PanedWindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, padx=8, pady=8)
 
-        controls = ttk.Frame(pw, width=290)
-        controls.pack_propagate(False)
-        pw.add(controls, weight=0)
+        from app.ui import make_scrollable_left_panel
+        controls = make_scrollable_left_panel(pw)
 
         preview_frame = ttk.LabelFrame(pw, text="Preview")
         pw.add(preview_frame, weight=1)
@@ -428,7 +427,7 @@ class RankingsTab(ttk.Frame):
         self._poll_var.set(s.rankings_poll)
         self._season_type_var.set(s.rankings_season_type)
         self._show_logos_var.set(s.rankings_show_logos)
-        self._show_rank_badges_var.set(True)
+        self._show_rank_badges_var.set(s.rankings_show_rank_badges)
         self._show_timestamp_var.set(s.rankings_show_timestamp)
         self._show_explainers_var.set(s.rankings_show_col_explainers)
         self._bg_color_var.set(s.rankings_bg_color)
@@ -453,6 +452,7 @@ class RankingsTab(ttk.Frame):
         s.rankings_poll              = self._poll_var.get()
         s.rankings_season_type       = self._season_type_var.get()
         s.rankings_show_logos        = self._show_logos_var.get()
+        s.rankings_show_rank_badges  = self._show_rank_badges_var.get()
         s.rankings_show_timestamp    = self._show_timestamp_var.get()
         s.rankings_show_col_explainers = self._show_explainers_var.get()
         s.rankings_bg_color          = self._bg_color_var.get()

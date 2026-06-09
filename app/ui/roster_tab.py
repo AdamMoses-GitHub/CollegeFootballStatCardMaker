@@ -32,9 +32,8 @@ class RosterTab(ttk.Frame):
     def _build_ui(self):
         pw = ttk.PanedWindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, padx=8, pady=8)
-        controls = ttk.Frame(pw, width=290)
-        controls.pack_propagate(False)
-        pw.add(controls, weight=0)
+        from app.ui import make_scrollable_left_panel
+        controls = make_scrollable_left_panel(pw)
         pf = ttk.LabelFrame(pw, text="Preview")
         pw.add(pf, weight=1)
         self._canvas = tk.Canvas(pf, bg="#CCCCCC", width=THUMB_W, height=THUMB_H)
@@ -102,6 +101,38 @@ class RosterTab(ttk.Frame):
         ttk.Label(r2, text="(0=current)", foreground="#555555").pack(side="left")
 
     def _build_display_opts(self, p):
+        # --- Layout ---
+        lf_layout = ttk.LabelFrame(p, text="Layout")
+        lf_layout.pack(fill="x", padx=8, pady=4)
+        r = ttk.Frame(lf_layout); r.pack(fill="x", padx=6, pady=(6, 6))
+        ttk.Label(r, text="Columns:").pack(side="left")
+        self._columns_var = tk.IntVar(value=1)
+        for n, lbl in ((1, "1"), (2, "2"), (3, "3")):
+            ttk.Radiobutton(r, text=lbl, variable=self._columns_var, value=n).pack(side="left", padx=(4, 0))
+        ttk.Label(r, text="  (2 or 3 recommended for full rosters)",
+                  foreground="#555555").pack(side="left", padx=(6, 0))
+
+        # --- Position groups filter ---
+        from app.data.roster_api import GROUP_ORDER
+        lf_grp = ttk.LabelFrame(p, text="Position Groups (uncheck to hide)")
+        lf_grp.pack(fill="x", padx=8, pady=4)
+        self._group_filter_vars: dict[str, tk.BooleanVar] = {}
+        # Two-column grid of checkboxes
+        gf = ttk.Frame(lf_grp)
+        gf.pack(fill="x", padx=6, pady=(4, 6))
+        for i, grp in enumerate(GROUP_ORDER):
+            v = tk.BooleanVar(value=True)
+            self._group_filter_vars[grp] = v
+            ttk.Checkbutton(gf, text=grp, variable=v).grid(
+                row=i // 2, column=i % 2, sticky="w", padx=4, pady=1)
+        row_ctrl = ttk.Frame(lf_grp)
+        row_ctrl.pack(fill="x", padx=6, pady=(0, 4))
+        ttk.Button(row_ctrl, text="All",  width=5,
+                   command=lambda: [v.set(True)  for v in self._group_filter_vars.values()]).pack(side="left", padx=(0, 4))
+        ttk.Button(row_ctrl, text="None", width=5,
+                   command=lambda: [v.set(False) for v in self._group_filter_vars.values()]).pack(side="left")
+
+        # --- Display options ---
         lf = ttk.LabelFrame(p, text="Display Options")
         lf.pack(fill="x", padx=8, pady=4)
         self._logo_var    = tk.BooleanVar(value=True)
@@ -110,8 +141,6 @@ class RosterTab(ttk.Frame):
         self._year_var    = tk.BooleanVar(value=True)
         self._hometown_var= tk.BooleanVar(value=True)
         self._hw_var      = tk.BooleanVar(value=False)
-        self._hide_ol_var = tk.BooleanVar(value=False)
-        self._hide_st_var = tk.BooleanVar(value=False)
         self._ts_disp_var = tk.BooleanVar(value=False)
         self._use_team_colors_var = tk.BooleanVar(value=False)
         for text, var in [
@@ -122,8 +151,6 @@ class RosterTab(ttk.Frame):
             ("Show year (Fr/So/Jr/Sr)", self._year_var),
             ("Show hometown",           self._hometown_var),
             ("Show height / weight",    self._hw_var),
-            ("Hide offensive linemen",  self._hide_ol_var),
-            ("Hide special teams",      self._hide_st_var),
             ("Show timestamp",          self._ts_disp_var),
         ]:
             ttk.Checkbutton(lf, text=text, variable=var).pack(anchor="w", padx=8, pady=1)
@@ -272,7 +299,12 @@ class RosterTab(ttk.Frame):
 
     def _build_config(self):
         from app.cards.roster_card import RosterCardConfig
+        from app.data.roster_api import GROUP_ORDER
         team = self._team_var.get()
+        # Build group filter: list of checked groups (empty = all shown)
+        checked = [g for g, v in self._group_filter_vars.items() if v.get()]
+        # If all groups are checked, pass empty list (no filter)
+        group_filter = [] if set(checked) == set(GROUP_ORDER) else checked
         cfg = RosterCardConfig(
             width_in=self._float(self._w_var, 5.0),
             height_in=self._float(self._h_var, 7.0),
@@ -285,8 +317,10 @@ class RosterTab(ttk.Frame):
             show_year=self._year_var.get(),
             show_hometown=self._hometown_var.get(),
             show_height_weight=self._hw_var.get(),
-            hide_ol=self._hide_ol_var.get(),
-            hide_st=self._hide_st_var.get(),
+            hide_ol=False,
+            hide_st=False,
+            columns=self._columns_var.get(),
+            group_filter=group_filter,
             use_team_colors=self._use_team_colors_var.get(),
             team=team,
         )
@@ -323,10 +357,12 @@ class RosterTab(ttk.Frame):
         self._year_var.set(s.roster_show_year)
         self._hometown_var.set(s.roster_show_hometown)
         self._hw_var.set(s.roster_show_height_weight)
-        self._hide_ol_var.set(s.roster_hide_ol)
-        self._hide_st_var.set(s.roster_hide_st)
         self._ts_disp_var.set(s.roster_show_timestamp)
         self._use_team_colors_var.set(s.roster_use_team_colors)
+        self._columns_var.set(getattr(s, "roster_columns", 1))
+        saved_filter = getattr(s, "roster_group_filter", None) or []
+        for grp, var in self._group_filter_vars.items():
+            var.set(grp in saved_filter if saved_filter else True)
         self._bg_var.set(s.roster_bg_color)
         self._fname_var.set(s.roster_export_filename)
         self._append_ts_var.set(s.roster_append_timestamp)
@@ -345,8 +381,12 @@ class RosterTab(ttk.Frame):
         s.roster_show_year            = self._year_var.get()
         s.roster_show_hometown        = self._hometown_var.get()
         s.roster_show_height_weight   = self._hw_var.get()
-        s.roster_hide_ol              = self._hide_ol_var.get()
-        s.roster_hide_st              = self._hide_st_var.get()
+        s.roster_hide_ol              = False
+        s.roster_hide_st              = False
+        s.roster_columns              = self._columns_var.get()
+        checked = [g for g, v in self._group_filter_vars.items() if v.get()]
+        from app.data.roster_api import GROUP_ORDER
+        s.roster_group_filter = [] if set(checked) == set(GROUP_ORDER) else checked
         s.roster_show_timestamp       = self._ts_disp_var.get()
         s.roster_use_team_colors      = self._use_team_colors_var.get()
         s.roster_bg_color             = self._bg_var.get()

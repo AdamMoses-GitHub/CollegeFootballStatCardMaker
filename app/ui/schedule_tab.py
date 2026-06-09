@@ -31,9 +31,8 @@ class ScheduleTab(ttk.Frame):
     def _build_ui(self):
         pw = ttk.PanedWindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, padx=8, pady=8)
-        controls = ttk.Frame(pw, width=290)
-        controls.pack_propagate(False)
-        pw.add(controls, weight=0)
+        from app.ui import make_scrollable_left_panel
+        controls = make_scrollable_left_panel(pw)
         pf = ttk.LabelFrame(pw, text="Preview")
         pw.add(pf, weight=1)
         self._canvas = tk.Canvas(pf, bg="#CCCCCC", width=THUMB_W, height=THUMB_H)
@@ -86,20 +85,16 @@ class ScheduleTab(ttk.Frame):
             self._w_spin.config(state="normal"); self._h_spin.config(state="normal")
 
     def _build_team_season(self, p):
-        lf = ttk.LabelFrame(p, text="Team & Season")
+        lf = ttk.LabelFrame(p, text="Team")
         lf.pack(fill="x", padx=8, pady=4)
-        r = ttk.Frame(lf); r.pack(fill="x", padx=6, pady=(6,2))
+        r = ttk.Frame(lf); r.pack(fill="x", padx=6, pady=(6, 2))
         ttk.Label(r, text="Team:").pack(side="left")
         self._team_var = tk.StringVar()
         self._team_cb = ttk.Combobox(r, textvariable=self._team_var, state="readonly", width=22)
-        self._team_cb.pack(side="left", padx=(4,0))
-        r2 = ttk.Frame(lf); r2.pack(fill="x", padx=6, pady=(2,6))
-        ttk.Label(r2, text="Season:").pack(side="left")
-        self._season_var = tk.StringVar()
+        self._team_cb.pack(side="left", padx=(4, 0))
         cur_year = datetime.datetime.now().year
-        ttk.Spinbox(r2, from_=1970, to=cur_year + 2,
-                    textvariable=self._season_var, width=7).pack(side="left", padx=(4,8))
-        ttk.Label(r2, text=f"(0 = {cur_year})", foreground="#555555").pack(side="left")
+        ttk.Label(lf, text=f"Always uses the current season ({cur_year}). Includes regular season and bowl games.",
+                  foreground="#555555", wraplength=250).pack(anchor="w", padx=6, pady=(0, 6))
 
     def _build_display_opts(self, p):
         lf = ttk.LabelFrame(p, text="Display Options")
@@ -111,7 +106,9 @@ class ScheduleTab(ttk.Frame):
         self._show_ts_var         = tk.BooleanVar(value=False)
         self._show_ha_col_var     = tk.BooleanVar(value=False)
         self._show_time_var       = tk.BooleanVar(value=True)
+        self._show_dow_var        = tk.BooleanVar(value=False)
         self._show_opp_logos_var  = tk.BooleanVar(value=False)
+        self._show_byes_var       = tk.BooleanVar(value=False)
         ttk.Checkbutton(lf, text="Show team logo",
                         variable=self._show_logo_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Show opponent logos",
@@ -120,6 +117,10 @@ class ScheduleTab(ttk.Frame):
                         variable=self._show_scores_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Show kickoff time",
                         variable=self._show_time_var).pack(anchor="w", padx=8, pady=1)
+        ttk.Checkbutton(lf, text="Show day of week (e.g. Sat Sep 06)",
+                        variable=self._show_dow_var).pack(anchor="w", padx=8, pady=1)
+        ttk.Checkbutton(lf, text="Show bye weeks",
+                        variable=self._show_byes_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Show H/A column (uncheck for @ prefix style)",
                         variable=self._show_ha_col_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Show W-L summary",
@@ -127,7 +128,7 @@ class ScheduleTab(ttk.Frame):
         ttk.Checkbutton(lf, text="Use team colors",
                         variable=self._use_team_colors_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Show timestamp",
-                        variable=self._show_ts_var).pack(anchor="w", padx=8, pady=(1,4))
+                        variable=self._show_ts_var).pack(anchor="w", padx=8, pady=(1, 4))
 
     def _build_bg_color(self, p):
         lf = ttk.LabelFrame(p, text="Background Color")
@@ -138,7 +139,7 @@ class ScheduleTab(ttk.Frame):
         ttk.Entry(r, textvariable=self._bg_var, width=9).pack(side="left", padx=(0,4))
         self._swatch = tk.Label(r, width=3, relief="sunken", background="#FFFFFF")
         self._swatch.pack(side="left", padx=(0,4))
-        ttk.Button(r, text="Pick...", command=self._pick_color).pack(side="left")
+        ttk.Button(r, text="Pick…", command=self._pick_color).pack(side="left")
 
     def _update_swatch(self, *_):
         c = self._bg_var.get()
@@ -155,10 +156,10 @@ class ScheduleTab(ttk.Frame):
         r = ttk.Frame(p); r.pack(fill="x", padx=8)
         self._fetch_btn = ttk.Button(r, text="Fetch & Preview", command=self._on_fetch)
         self._fetch_btn.pack(side="left", padx=(0,6))
-        self._refresh_btn = ttk.Button(r, text="Refresh", width=9, command=self._on_refresh)
+        self._refresh_btn = ttk.Button(r, text="↺ Refresh", width=9, command=self._on_refresh)
         self._refresh_btn.pack(side="left")
         r2 = ttk.Frame(p); r2.pack(fill="x", padx=8, pady=(4,0))
-        self._full_btn = ttk.Button(r2, text="Full Preview...", command=self._on_full, state="disabled")
+        self._full_btn = ttk.Button(r2, text="Full Preview…", command=self._on_full, state="disabled")
         self._full_btn.pack(side="left")
         self._status = ttk.Label(p, text="", foreground="#aa2200", wraplength=260, justify="left")
         self._status.pack(fill="x", padx=8, pady=4)
@@ -202,7 +203,7 @@ class ScheduleTab(ttk.Frame):
         if self._fetching: return
         self._fetching = True
         self._fetch_btn.config(state="disabled"); self._refresh_btn.config(state="disabled")
-        self._status.config(text="Fetching...", foreground="#555555")
+        self._status.config(text="Fetching…", foreground="#555555")
         threading.Thread(target=self._fetch_thread, args=(bypass,), daemon=True).start()
 
     def _fetch_thread(self, bypass):
@@ -211,27 +212,38 @@ class ScheduleTab(ttk.Frame):
             from app.cards.game_record_card import GameRecordCardRenderer
             team   = self._team_var.get()
             if not team: raise ValueError("Please select a team.")
-            season = self._int(self._season_var, 0)
             key    = self.settings.cfbd_api_key
             ttl    = self.settings.data_cache_ttl_minutes
-            # Schedule: full_season mode, regular season, ascending sort, no N limit
-            block = fetch_game_record(team, season, key, 99, "asc", "full_season", "regular") if bypass \
-                    else fetch_game_record_cached(team, season, key, 99, "asc", "full_season", "regular", ttl)
-            cfg   = self._build_config()
+            # Schedule: full_season mode, current year (season=0), both types, ascending sort
+            block = fetch_game_record(team, 0, key, 99, "asc", "full_season", "both") if bypass \
+                    else fetch_game_record_cached(team, 0, key, 99, "asc", "full_season", "both", ttl)
+
+            # If cfbd has no kickoff times yet (all upcoming games are TBD),
+            # suppress the time column so it doesn't take up space showing all-TBD.
+            upcoming = [g for g in block.games if g.team_score is None]
+            times_unavailable = bool(upcoming) and all(g.time_tbd for g in upcoming)
+
+            cfg   = self._build_config(force_hide_time=times_unavailable)
             img   = GameRecordCardRenderer().render(block, cfg, self.settings.working_dir)
-            self.after(0, lambda: self._done(img, None))
+            self.after(0, lambda m=times_unavailable: self._done(img, None, m))
         except Exception as exc:
             logger.exception("Schedule fetch/render failed")
             msg = str(exc)
-            self.after(0, lambda m=msg: self._done(None, m))
+            self.after(0, lambda m=msg: self._done(None, m, False))
 
-    def _done(self, img, err):
+    def _done(self, img, err, times_unavailable=False):
         self._fetching = False
         self._fetch_btn.config(state="normal"); self._refresh_btn.config(state="normal")
         if err:
             self._status.config(text=err, foreground="#aa2200"); return
         self._card_image = img
-        self._status.config(text="", foreground="#aa2200")
+        if times_unavailable:
+            self._status.config(
+                text="Note: kickoff times not yet released by cfbd — time column hidden.",
+                foreground="#886600",
+            )
+        else:
+            self._status.config(text="", foreground="#aa2200")
         self._full_btn.config(state="normal")
         self._png_btn.config(state="normal"); self._jpg_btn.config(state="normal")
         self._update_thumb()
@@ -272,7 +284,7 @@ class ScheduleTab(ttk.Frame):
         try: return float(var.get())
         except ValueError: return default
 
-    def _build_config(self):
+    def _build_config(self, force_hide_time: bool = False):
         from app.cards.game_record_card import GameRecordCardConfig
         team = self._team_var.get()
         cfg = GameRecordCardConfig(
@@ -286,9 +298,13 @@ class ScheduleTab(ttk.Frame):
             use_team_colors=self._use_team_colors_var.get(),
             show_week=True,
             show_scores=self._show_scores_var.get(),
+            combine_result_score=True,
             show_ha_col=self._show_ha_col_var.get(),
-            show_time=self._show_time_var.get(),
+            show_time=False if force_hide_time else self._show_time_var.get(),
+            show_day_of_week=self._show_dow_var.get(),
+            show_byes=self._show_byes_var.get(),
             show_opp_logos=self._show_opp_logos_var.get(),
+            timezone=getattr(self.settings, "display_timezone", "ET"),
             team=team,
         )
         if cfg.use_team_colors and team:
@@ -311,13 +327,14 @@ class ScheduleTab(ttk.Frame):
         self._w_var.set(str(s.schedule_width_in))
         self._h_var.set(str(s.schedule_height_in))
         self._global_var.set(s.schedule_use_global_size)
-        self._season_var.set(str(s.schedule_season))
         self._team_var.set(s.schedule_team)
         self._show_logo_var.set(s.schedule_show_logos)
         self._show_opp_logos_var.set(s.schedule_show_opp_logos)
         self._show_scores_var.set(s.schedule_show_scores)
         self._show_ha_col_var.set(s.schedule_show_ha_col)
         self._show_time_var.set(s.schedule_show_time)
+        self._show_dow_var.set(getattr(s, "schedule_show_day_of_week", False))
+        self._show_byes_var.set(getattr(s, "schedule_show_byes", False))
         self._show_summary_var.set(s.schedule_show_summary)
         self._show_ts_var.set(s.schedule_show_timestamp)
         self._use_team_colors_var.set(s.schedule_use_team_colors)
@@ -331,13 +348,14 @@ class ScheduleTab(ttk.Frame):
         s.schedule_width_in         = self._float(self._w_var, 6.0)
         s.schedule_height_in        = self._float(self._h_var, 9.0)
         s.schedule_use_global_size  = self._global_var.get()
-        s.schedule_season           = self._int(self._season_var, 0)
         s.schedule_team             = self._team_var.get()
         s.schedule_show_logos       = self._show_logo_var.get()
         s.schedule_show_opp_logos   = self._show_opp_logos_var.get()
         s.schedule_show_scores      = self._show_scores_var.get()
         s.schedule_show_ha_col      = self._show_ha_col_var.get()
         s.schedule_show_time        = self._show_time_var.get()
+        s.schedule_show_day_of_week = self._show_dow_var.get()
+        s.schedule_show_byes        = self._show_byes_var.get()
         s.schedule_show_summary     = self._show_summary_var.get()
         s.schedule_show_timestamp   = self._show_ts_var.get()
         s.schedule_use_team_colors  = self._use_team_colors_var.get()

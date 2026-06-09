@@ -28,6 +28,9 @@ class Settings:
     # Export canvas margin
     export_canvas_margin_pct: float = 0.0
 
+    # Display timezone for kickoff times (ET / CT / MT / PT / AKT / HT / UTC)
+    display_timezone: str = "ET"
+
     # Data cache TTL
     data_cache_ttl_minutes: int = 15
 
@@ -157,6 +160,8 @@ class Settings:
     roster_use_team_colors: bool = False
     roster_hide_ol: bool = False
     roster_hide_st: bool = False
+    roster_columns: int = 1
+    roster_group_filter: list = field(default_factory=list)
     roster_width_in: float = 5.0
     roster_height_in: float = 7.0
     roster_use_global_size: bool = False
@@ -216,6 +221,8 @@ class Settings:
     schedule_show_scores: bool = True
     schedule_show_ha_col: bool = False
     schedule_show_time: bool = True
+    schedule_show_day_of_week: bool = False
+    schedule_show_byes: bool = False
     schedule_show_summary: bool = True
     schedule_show_timestamp: bool = False
     schedule_use_team_colors: bool = False
@@ -228,6 +235,9 @@ class Settings:
     game_record_series_detail: str = "result_only"
     game_record_show_logos: bool = True
     game_record_show_opp_logos: bool = False
+    game_record_show_scores: bool = True
+    game_record_show_ha_col: bool = True
+    game_record_show_time: bool = True
     game_record_show_summary: bool = True
     game_record_show_timestamp: bool = False
     game_record_show_col_explainers: bool = False
@@ -246,6 +256,7 @@ class Settings:
     rankings_poll: str = "AP Top 25"
     rankings_season_type: str = "regular"
     rankings_show_logos: bool = True
+    rankings_show_rank_badges: bool = True
     rankings_show_timestamp: bool = False
     rankings_show_col_explainers: bool = False
     rankings_width_in: float = 6.0

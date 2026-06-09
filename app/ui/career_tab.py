@@ -33,9 +33,8 @@ class CareerTab(ttk.Frame):
     def _build_ui(self):
         pw = ttk.PanedWindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, padx=8, pady=8)
-        controls = ttk.Frame(pw, width=290)
-        controls.pack_propagate(False)
-        pw.add(controls, weight=0)
+        from app.ui import make_scrollable_left_panel
+        controls = make_scrollable_left_panel(pw)
         pf = ttk.LabelFrame(pw, text="Preview")
         pw.add(pf, weight=1)
         self._canvas = tk.Canvas(pf, bg="#CCCCCC", width=THUMB_W, height=THUMB_H)
@@ -98,9 +97,15 @@ class CareerTab(ttk.Frame):
         ttk.Button(r, text="Search", command=self._on_search).pack(side="left")
 
         self._results_var = tk.StringVar()
-        self._results_lb = tk.Listbox(lf, height=4, listvariable=self._results_var,
-                                      selectmode="single", activestyle="none")
-        self._results_lb.pack(fill="x", padx=6, pady=(2,2))
+        lb_frame = ttk.Frame(lf)
+        lb_frame.pack(fill="x", padx=6, pady=(2, 2))
+        lb_sb = ttk.Scrollbar(lb_frame, orient="vertical")
+        self._results_lb = tk.Listbox(lb_frame, height=5, listvariable=self._results_var,
+                                      selectmode="single", activestyle="none",
+                                      yscrollcommand=lb_sb.set)
+        lb_sb.config(command=self._results_lb.yview)
+        lb_sb.pack(side="right", fill="y")
+        self._results_lb.pack(side="left", fill="both", expand=True)
         self._results_lb.bind("<<ListboxSelect>>", self._on_select)
 
         self._selected_lbl = ttk.Label(lf, text="No player selected",

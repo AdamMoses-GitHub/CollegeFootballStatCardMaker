@@ -24,6 +24,10 @@ class GameRecordCardConfig(CardConfig):
     show_ha_col: bool     = True
     show_time: bool       = True
     show_opp_logos: bool  = False
+    show_day_of_week: bool = False
+    combine_result_score: bool = False
+    show_byes: bool        = False
+    timezone: str         = "ET"
 
     title_bg: str      = "#1a3a5c"
     title_fg: str      = "#FFFFFF"
@@ -58,34 +62,74 @@ _HEADER_PCT = 0.065
 _FOOTER_PCT = 0.07
 
 # ---------------------------------------------------------------------------
+# Timezone offset map  (standard_hours, daylight_hours)
+# DST heuristic: months 3–11 (Mar–Nov) use daylight offset
+# Used only when zoneinfo is unavailable (Python < 3.9).
+# ---------------------------------------------------------------------------
+_TZ_OFFSETS: dict[str, tuple[int, int]] = {
+    "ET":  (-5, -4),
+    "CT":  (-6, -5),
+    "MT":  (-7, -6),
+    "PT":  (-8, -7),
+    "AKT": (-9, -8),
+    "HT":  (-10, -10),  # Hawaii does not observe DST
+    "UTC": (0,   0),
+}
+
+# IANA timezone names for zoneinfo (Python 3.9+)
+_TZ_IANA: dict[str, str] = {
+    "ET":  "America/New_York",
+    "CT":  "America/Chicago",
+    "MT":  "America/Denver",
+    "PT":  "America/Los_Angeles",
+    "AKT": "America/Anchorage",
+    "HT":  "Pacific/Honolulu",
+    "UTC": "UTC",
+}
+
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _HAS_ZONEINFO = True
+except ImportError:
+    _HAS_ZONEINFO = False
+
+
+def _utc_to_local(utc_dt: "datetime.datetime", timezone: str) -> "datetime.datetime":
+    """Convert a UTC datetime to local time using zoneinfo when available."""
+    import datetime as _dt
+    if utc_dt.tzinfo is None:
+        utc_dt = utc_dt.replace(tzinfo=_dt.timezone.utc)
+    if _HAS_ZONEINFO:
+        iana = _TZ_IANA.get(timezone, "America/New_York")
+        return utc_dt.astimezone(_ZoneInfo(iana))
+    # Fallback: simple DST heuristic
+    std_off, dst_off = _TZ_OFFSETS.get(timezone, (-5, -4))
+    offset = dst_off if 3 <= utc_dt.month <= 11 else std_off
+    return utc_dt + _dt.timedelta(hours=offset)
+
+
+# ---------------------------------------------------------------------------
 # Time formatting helper
 # ---------------------------------------------------------------------------
 
-def _format_game_time(game) -> str:
-    """Return a formatted kickoff time string in US Eastern, or 'TBD'."""
+def _format_game_time(game, timezone: str = "ET") -> str:
+    """Return a formatted kickoff time string in the given timezone, or 'TBD'."""
     if game.time_tbd or game.start_time_utc is None:
         return "TBD"
     # Only show time for upcoming games; completed games show score instead
     if game.team_score is not None:
         return ""
     try:
-        import datetime as _dt
-        utc = game.start_time_utc
-        if utc.tzinfo is None:
-            # Assume UTC
-            utc = utc.replace(tzinfo=_dt.timezone.utc)
-        # Convert to Eastern (UTC-4 in summer / EDT, UTC-5 in winter / EST)
-        # Simple heuristic: EDT (UTC-4) from Mar to Nov, EST (UTC-5) otherwise
-        month = utc.month
-        offset = -4 if 3 <= month <= 11 else -5
-        eastern = utc + _dt.timedelta(hours=offset)
-        # Format: "12:00 PM ET"
-        h = eastern.hour
-        m = eastern.minute
+        local = _utc_to_local(game.start_time_utc, timezone)
+        h = local.hour
+        m = local.minute
+        # Sentinel guard: cfbd uses midnight-ish placeholders even when time
+        # is TBD. After timezone conversion games should never start before 9 AM.
+        if h < 9:
+            return "TBD"
         ampm = "PM" if h >= 12 else "AM"
         h12 = h % 12 or 12
-        time_str = f"{h12}:{m:02d} {ampm} ET"
-        return time_str
+        return f"{h12}:{m:02d} {ampm} {timezone}"
     except Exception:
         return "TBD"
 
@@ -103,13 +147,16 @@ class GameRecordCardRenderer:
 
         cols = self._cols(config)
 
+        # Filter out bye weeks if the toggle is off
+        games = [g for g in block.games if not g.is_bye] if not config.show_byes else block.games
+
         title_h  = round(H * _TITLE_PCT)
         header_h = round(H * _HEADER_PCT)
         has_footer = config.show_summary or config.show_timestamp
         footer_h = round(H * _FOOTER_PCT) if has_footer else 0
 
         data_h  = H - title_h - header_h - footer_h
-        n_rows  = max(len(block.games), 1)
+        n_rows  = max(len(games), 1)
         row_h   = max(16, data_h // n_rows)
 
         col_widths = self._col_widths(W, cols)
@@ -122,7 +169,7 @@ class GameRecordCardRenderer:
         self._draw_header(draw, cols, col_widths, config, y, header_h, W)
         y += header_h
 
-        for i, game in enumerate(block.games):
+        for i, game in enumerate(games):
             row_bg = self._row_bg(game, config, i)
             draw.rectangle([0, y, W - 1, y + row_h - 1], fill=row_bg)
             self._draw_row(draw, img, game, cols, col_widths, config, y, row_h, working_dir)
@@ -148,6 +195,8 @@ class GameRecordCardRenderer:
             base = [c for c in base if c != "SCORE"]
         if not config.show_time:
             base = [c for c in base if c != "TIME"]
+        if config.combine_result_score:
+            base = [c for c in base if c != "RESULT"]
         return base
 
     def _col_widths(self, total_w: int, cols: list[str]) -> list[int]:
@@ -217,7 +266,8 @@ class GameRecordCardRenderer:
         font = get_font(max(7, round(header_h * 0.48)), bold=True, condensed=True)
         xs   = self._col_xs(col_widths)
         labels = {"WK": "WK", "DATE": "DATE", "OPP": "OPPONENT", "H/A": "H/A",
-                  "RESULT": "W/L", "SCORE": "SCORE"}
+                  "RESULT": "W/L",
+                  "SCORE": "RESULT" if config.combine_result_score else "SCORE"}
         for i, col in enumerate(cols):
             col_x = xs[i]
             col_w = col_widths[i]
@@ -233,6 +283,8 @@ class GameRecordCardRenderer:
                 draw.line([(col_x, y), (col_x, y + header_h - 1)], fill="#3d6a96", width=1)
 
     def _row_bg(self, game: GameResult, config: GameRecordCardConfig, idx: int) -> str:
+        if game.is_bye:
+            return "#E8E8E8"
         if game.result == "W":
             return config.win_bg
         if game.result == "L":
@@ -247,6 +299,23 @@ class GameRecordCardRenderer:
         font_b  = get_font(font_sz, bold=True)
         xs      = self._col_xs(col_widths)
 
+        # Bye week — render a single centred label and return
+        if game.is_bye:
+            bye_color = "#888888"
+            wk_str = f"Wk {game.week}" if game.week else ""
+            bye_text = f"{wk_str}  —  BYE WEEK" if wk_str else "BYE WEEK"
+            font_i = get_font(font_sz, italic=True)
+            bb = draw.textbbox((0, 0), bye_text, font=font_i)
+            tw, th = bb[2] - bb[0], bb[3] - bb[1]
+            W_total = sum(col_widths)
+            draw.text((_CELL_PAD, y + (row_h - th) // 2), bye_text, font=font_i, fill=bye_color)
+            # light dashed divider across full width
+            dash_y = y + row_h - 1
+            for x0 in range(0, W_total, 8):
+                draw.line([(x0, dash_y), (min(x0 + 4, W_total - 1), dash_y)],
+                          fill="#BBBBBB", width=1)
+            return
+
         is_upcoming = game.team_score is None
         # Opponent name: prefix with @/vs when H/A column is hidden
         if not config.show_ha_col:
@@ -258,15 +327,22 @@ class GameRecordCardRenderer:
                 opp_display = game.opponent
         else:
             opp_display = game.opponent
+        result_prefix = {"W": "(W) ", "L": "(L) ", "T": "(T) "}
         values = {
             "WK":     str(game.week) if game.week else "",
-            "DATE":   game.date.strftime("%b %d") if game.date else f"Wk {game.week}",
+            "DATE":   (game.date.strftime("%a %b %d") if config.show_day_of_week
+                       else game.date.strftime("%b %d")) if game.date else f"Wk {game.week}",
             "OPP":    opp_display,
             "H/A":    "N" if game.is_neutral else ("H" if game.is_home else "A"),
-            "TIME":   _format_game_time(game),
-            "RESULT": game.result if game.result else ("▶" if is_upcoming else "—"),
-            "SCORE":  (f"{game.team_score}–{game.opp_score}"
-                       if game.team_score is not None else ("TBD" if is_upcoming else "—")),
+            "TIME":   _format_game_time(game, config.timezone),
+            "RESULT": game.result if game.result else ("TBD" if is_upcoming else "—"),
+            "SCORE":  (
+                (result_prefix.get(game.result, "") + f"{game.team_score}–{game.opp_score}")
+                if game.team_score is not None and config.combine_result_score
+                else (f"{game.team_score}–{game.opp_score}"
+                      if game.team_score is not None
+                      else ("TBD" if is_upcoming else "—"))
+            ),
         }
         result_colors = {"W": "#006600", "L": "#aa2200", "T": "#886600"}
 
@@ -282,6 +358,8 @@ class GameRecordCardRenderer:
             color = config.text_color
             if col == "RESULT":
                 color = result_colors.get(val, config.text_color)
+            if col == "SCORE" and config.combine_result_score:
+                color = result_colors.get(game.result, config.text_color)
 
             if col == "OPP":
                 tx = col_x + _CELL_PAD

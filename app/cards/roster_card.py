@@ -21,6 +21,8 @@ class RosterCardConfig(CardConfig):
     show_height_weight: bool = False
     hide_ol: bool            = False
     hide_st: bool            = False
+    columns: int             = 1      # 1, 2, or 3 side-by-side columns
+    group_filter: list       = None   # None = all groups shown
     team: str                = ""
     use_team_colors: bool    = False
 
@@ -33,6 +35,10 @@ class RosterCardConfig(CardConfig):
     divider_color: str  = "#CCCCCC"
     text_color: str     = "#111111"
     footer_color: str   = "#888888"
+
+    def __post_init__(self):
+        if self.group_filter is None:
+            self.group_filter = []
 
 
 _TITLE_PCT  = 0.08
@@ -62,25 +68,32 @@ class RosterCardRenderer:
 
         self._draw_title(draw, img, block, config, W, title_h, working_dir)
 
-        # Collect rows to draw
-        rows = self._build_rows(block, config)
-        n_rows = len(rows)
+        # Build flat row list
+        all_rows = self._build_rows(block, config)
 
-        if n_rows == 0:
-            draw.text((10, title_h + 10), "No roster data.", font=get_font(12), fill=config.text_color)
+        if not all_rows:
+            draw.text((10, title_h + 10), "No roster data.",
+                      font=get_font(12), fill=config.text_color)
         else:
-            row_h = max(12, body_h // n_rows)
-            y = title_h
-            for row in rows:
-                if row.get("group_header"):
-                    self._draw_group_header(draw, row["label"], config, y, row_h, W)
-                else:
-                    bg = config.row_color if row["idx"] % 2 == 0 else config.row_alt_color
-                    draw.rectangle([0, y, W - 1, y + row_h - 1], fill=bg)
-                    self._draw_player_row(draw, row["player"], config, y, row_h, W)
-                    draw.line([(0, y + row_h - 1), (W - 1, y + row_h - 1)],
-                              fill=config.divider_color, width=1)
-                y += row_h
+            ncols = max(1, min(config.columns, 3))
+            if ncols == 1:
+                row_h = max(12, body_h // len(all_rows))
+                self._draw_column(draw, all_rows, config, 0, W, title_h, row_h)
+            else:
+                col_rows = self._split_columns(all_rows, ncols)
+                # row_h is uniform: sized to the tallest column so all columns match
+                max_rows = max(len(r) for r in col_rows) if col_rows else 1
+                row_h = max(12, body_h // max(max_rows, 1))
+                col_w = W // ncols
+                for ci, rows in enumerate(col_rows):
+                    x0 = ci * col_w
+                    cw = col_w if ci < ncols - 1 else W - x0
+                    self._draw_column(draw, rows, config, x0, cw, title_h, row_h)
+                    # Column separator
+                    if ci < ncols - 1:
+                        sx = x0 + col_w
+                        draw.line([(sx, title_h), (sx, title_h + body_h - 1)],
+                                  fill=config.divider_color, width=1)
 
         if config.show_timestamp:
             fy = H - footer_h
@@ -92,16 +105,58 @@ class RosterCardRenderer:
         return img
 
     # ------------------------------------------------------------------
+    # Column layout helpers
+    # ------------------------------------------------------------------
+
+    def _split_columns(self, rows: list[dict], ncols: int) -> list[list[dict]]:
+        """Divide rows into *ncols* roughly equal chunks by row count."""
+        import math
+        chunk = math.ceil(len(rows) / ncols)
+        return [rows[i * chunk:(i + 1) * chunk] for i in range(ncols)]
+
+    def _draw_column(
+        self,
+        draw: ImageDraw.ImageDraw,
+        rows: list[dict],
+        config: RosterCardConfig,
+        x0: int,
+        col_w: int,
+        title_h: int,
+        row_h: int,
+    ) -> None:
+        if not rows:
+            return
+        y = title_h
+        for row in rows:
+            if row.get("group_header"):
+                self._draw_group_header(draw, row["label"], config, x0, y, row_h, col_w)
+            else:
+                bg = config.row_color if row["idx"] % 2 == 0 else config.row_alt_color
+                draw.rectangle([x0, y, x0 + col_w - 1, y + row_h - 1], fill=bg)
+                self._draw_player_row(draw, row["player"], config, x0, y, row_h, col_w)
+                draw.line([(x0, y + row_h - 1), (x0 + col_w - 1, y + row_h - 1)],
+                          fill=config.divider_color, width=1)
+            y += row_h
 
     def _build_rows(self, block: RosterBlock, config: RosterCardConfig) -> list[dict]:
+        # Determine which groups to show
+        active_filter = set(config.group_filter) if config.group_filter else set()
+
+        def _skip_group(group: str) -> bool:
+            if active_filter and group not in active_filter:
+                return True
+            if config.hide_ol and group == "OL":
+                return True
+            if config.hide_st and group == "ST":
+                return True
+            return False
+
         rows = []
         if config.group_by_position:
             grouped = block.grouped()
             player_idx = 0
             for group, players in grouped.items():
-                if config.hide_ol and group == "OL":
-                    continue
-                if config.hide_st and group == "ST":
+                if _skip_group(group):
                     continue
                 rows.append({"group_header": True, "label": group})
                 for p in players:
@@ -109,9 +164,7 @@ class RosterCardRenderer:
                     player_idx += 1
         else:
             for i, p in enumerate(block.players):
-                if config.hide_ol and p.pos_group == "OL":
-                    continue
-                if config.hide_st and p.pos_group == "ST":
+                if _skip_group(p.pos_group):
                     continue
                 rows.append({"group_header": False, "player": p, "idx": i})
         return rows
@@ -144,20 +197,20 @@ class RosterCardRenderer:
 
         draw.text((text_x, ty), title_text, font=tf, fill=config.title_fg)
 
-    def _draw_group_header(self, draw, label, config, y, row_h, W):
-        draw.rectangle([0, y, W - 1, y + row_h - 1], fill=config.group_hdr_bg)
+    def _draw_group_header(self, draw, label, config, x0, y, row_h, col_w):
+        draw.rectangle([x0, y, x0 + col_w - 1, y + row_h - 1], fill=config.group_hdr_bg)
         font = get_font(max(7, round(row_h * 0.55)), bold=True, condensed=True)
         bb   = draw.textbbox((0, 0), label, font=font)
         ty   = y + (row_h - (bb[3] - bb[1])) // 2
-        draw.text((self.CELL_PAD, ty), label, font=font, fill=config.group_hdr_fg)
+        draw.text((x0 + self.CELL_PAD, ty), label, font=font, fill=config.group_hdr_fg)
 
-    def _draw_player_row(self, draw, player: RosterPlayer, config, y, row_h, W):
+    def _draw_player_row(self, draw, player: RosterPlayer, config, x0, y, row_h, col_w):
         font_sz = max(7, round(row_h * 0.50))
         font    = get_font(font_sz)
         font_b  = get_font(font_sz, bold=True)
         pad     = self.CELL_PAD
 
-        x = pad
+        x = x0 + pad
         # Jersey
         if config.show_jersey and player.jersey:
             jtext = f"#{player.jersey}"
@@ -196,6 +249,6 @@ class RosterCardRenderer:
         if right_parts:
             right_text = "  ·  ".join(right_parts)
             rb  = draw.textbbox((0, 0), right_text, font=font)
-            rx  = W - (rb[2] - rb[0]) - pad
+            rx  = x0 + col_w - (rb[2] - rb[0]) - pad
             ry  = y + (row_h - (rb[3] - rb[1])) // 2
             draw.text((rx, ry), right_text, font=font, fill=config.footer_color)

@@ -32,9 +32,8 @@ class MatchupTab(ttk.Frame):
     def _build_ui(self):
         pw = ttk.PanedWindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, padx=8, pady=8)
-        controls = ttk.Frame(pw, width=290)
-        controls.pack_propagate(False)
-        pw.add(controls, weight=0)
+        from app.ui import make_scrollable_left_panel
+        controls = make_scrollable_left_panel(pw)
         pf = ttk.LabelFrame(pw, text="Preview")
         pw.add(pf, weight=1)
         self._canvas = tk.Canvas(pf, bg="#CCCCCC", width=THUMB_W, height=THUMB_H)

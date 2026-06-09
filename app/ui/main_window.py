@@ -109,3 +109,7 @@ class MainWindow(tk.Tk):
         self.settings.window_geometry = self.geometry()
         self.settings.save(self.settings.working_dir)
         self.destroy()
+        # os._exit bypasses interpreter shutdown, which races with daemon threads
+        # (API fetch threads) and produces spurious 'NoneType context manager' errors.
+        # All state has been saved above, so hard exit is safe here.
+        os._exit(0)

@@ -84,9 +84,8 @@ class StandingsTab(ttk.Frame):
         pw.pack(fill="both", expand=True, padx=8, pady=8)
 
         # Left: controls panel
-        controls = ttk.Frame(pw, width=290)
-        controls.pack_propagate(False)
-        pw.add(controls, weight=0)
+        from app.ui import make_scrollable_left_panel
+        controls = make_scrollable_left_panel(pw)
 
         # Right: preview panel
         preview_frame = ttk.LabelFrame(pw, text="Preview")
@@ -238,10 +237,10 @@ class StandingsTab(ttk.Frame):
             w = float(self._width_var.get())
             mode = suggest_column_mode(w)
             self._col_suggest_label.config(
-                text=f"→ {'Extended' if mode == 'extended' else 'Standard'} columns suggested"
+                text=f"\u2192 {'Extended' if mode == 'extended' else 'Standard'} columns suggested"
             )
         except (ValueError, ImportError):
-            pass
+            self._col_suggest_label.config(text="\u2192 (set width to see suggestion)")
 
     # ---- Display Options ----------------------------------------------
 

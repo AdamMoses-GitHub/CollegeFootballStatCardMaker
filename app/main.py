@@ -4,6 +4,7 @@ import os
 
 from app.settings import Settings, init_working_dir
 from app.ui.main_window import MainWindow
+from app.data import logo_cache
 
 
 def _setup_logging(working_dir: str) -> None:
@@ -42,6 +43,7 @@ def main() -> None:
     os.makedirs(default_cfg_dir, exist_ok=True)
     settings = Settings.load(default_cfg_dir)
     init_working_dir(settings.working_dir)
+    logo_cache.set_api_key(settings.cfbd_api_key)
     _setup_logging(settings.working_dir)
     app = MainWindow(settings)
     app.mainloop()
