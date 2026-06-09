@@ -27,6 +27,8 @@ class GameRecordCardConfig(CardConfig):
     show_day_of_week: bool = False
     combine_result_score: bool = False
     show_byes: bool        = False
+    show_year_in_date: bool = False
+    show_season_breaks: bool = False
     timezone: str         = "ET"
 
     title_bg: str      = "#1a3a5c"
@@ -157,6 +159,11 @@ class GameRecordCardRenderer:
 
         data_h  = H - title_h - header_h - footer_h
         n_rows  = max(len(games), 1)
+        if config.show_season_breaks and len(games) > 1:
+            # Count how many season transitions exist
+            breaks = sum(1 for i in range(1, len(games))
+                         if games[i - 1].season != games[i].season)
+            n_rows += breaks
         row_h   = max(16, data_h // n_rows)
 
         col_widths = self._col_widths(W, cols)
@@ -170,6 +177,10 @@ class GameRecordCardRenderer:
         y += header_h
 
         for i, game in enumerate(games):
+            # Season break separator (last-N mode across seasons)
+            if config.show_season_breaks and i > 0 and games[i - 1].season != game.season:
+                self._draw_season_break(draw, game.season, config, y, row_h, W)
+                y += row_h
             row_bg = self._row_bg(game, config, i)
             draw.rectangle([0, y, W - 1, y + row_h - 1], fill=row_bg)
             self._draw_row(draw, img, game, cols, col_widths, config, y, row_h, working_dir)
@@ -223,6 +234,17 @@ class GameRecordCardRenderer:
         return xs
 
     # ------------------------------------------------------------------
+
+    def _draw_season_break(self, draw, season: int, config, y: int, row_h: int, W: int) -> None:
+        """Draw a subtle season-label divider row between different seasons."""
+        draw.rectangle([0, y, W - 1, y + row_h - 1], fill="#D0D8E4")
+        label = str(season)
+        font = get_font(max(7, round(row_h * 0.52)), bold=True, condensed=True)
+        bb = draw.textbbox((0, 0), label, font=font)
+        tw, th = bb[2] - bb[0], bb[3] - bb[1]
+        draw.text((_CELL_PAD, y + (row_h - th) // 2), label, font=font, fill="#1a3a5c")
+        draw.line([(0, y + row_h - 1), (W - 1, y + row_h - 1)],
+                  fill=config.divider_color, width=1)
 
     def _draw_title(self, draw, img, block, config, W, title_h, working_dir):
         draw.rectangle([0, 0, W - 1, title_h - 1], fill=config.title_bg)
@@ -330,8 +352,14 @@ class GameRecordCardRenderer:
         result_prefix = {"W": "(W) ", "L": "(L) ", "T": "(T) "}
         values = {
             "WK":     str(game.week) if game.week else "",
-            "DATE":   (game.date.strftime("%a %b %d") if config.show_day_of_week
-                       else game.date.strftime("%b %d")) if game.date else f"Wk {game.week}",
+            "DATE":   (
+                (game.date.strftime("%a %b %d '%y") if config.show_day_of_week
+                 else game.date.strftime("%b %d '%y"))
+                if game.date and config.show_year_in_date
+                else
+                (game.date.strftime("%a %b %d") if config.show_day_of_week
+                 else game.date.strftime("%b %d")) if game.date else f"Wk {game.week}"
+            ),
             "OPP":    opp_display,
             "H/A":    "N" if game.is_neutral else ("H" if game.is_home else "A"),
             "TIME":   _format_game_time(game, config.timezone),

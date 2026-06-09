@@ -212,6 +212,11 @@ class Settings:
     game_record_n: int = 10
     game_record_date_sort: str = "desc"
     game_record_season_type: str = "both"     # "regular" | "postseason" | "both"
+    game_record_mode: str = "season"          # "season" | "last_n"
+    game_record_lastn_season_type: str = "both"
+    game_record_max_seasons_back: int = 6
+    game_record_show_year_in_date: bool = False
+    game_record_show_season_breaks: bool = True
 
     # ---- Schedule ----
     schedule_team: str = "Alabama"

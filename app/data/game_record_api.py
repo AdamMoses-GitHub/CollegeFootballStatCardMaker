@@ -234,6 +234,172 @@ def _insert_bye_weeks(results: list[GameResult], season: int) -> list[GameResult
 _cache: dict[tuple, tuple[datetime.datetime, GameRecordBlock]] = {}
 
 
+def fetch_last_n_across_seasons(
+    team: str,
+    api_key: str,
+    n: int = 10,
+    date_sort: str = "desc",
+    season_type: str = "both",
+    max_seasons_back: int = 6,
+) -> GameRecordBlock:
+    """Fetch the last N *completed* games for a team, crossing season boundaries.
+
+    Starts from the most recently completed season and works backward until
+    N games have been accumulated or max_seasons_back seasons have been searched.
+    Future (unplayed) games are excluded.
+    """
+    if not api_key:
+        raise ValueError("No CFBD API key configured. Add your key in Settings.")
+
+    try:
+        import cfbd
+    except ImportError as exc:
+        raise ImportError("The 'cfbd' package is not installed.") from exc
+
+    if season_type == "postseason":
+        st_arg = cfbd.SeasonType.POSTSEASON
+    elif season_type == "both":
+        st_arg = cfbd.SeasonType.BOTH
+    else:
+        st_arg = cfbd.SeasonType.REGULAR
+
+    configuration = cfbd.Configuration()
+    configuration.access_token = api_key
+    api_client = cfbd.ApiClient(configuration)
+    games_api = cfbd.GamesApi(api_client)
+
+    all_results: list[GameResult] = []
+    total_wins = total_losses = 0
+    start_season = _current_season()
+
+    for season_offset in range(max_seasons_back):
+        check_season = start_season - season_offset
+        try:
+            raw = games_api.get_games(year=check_season, team=team, season_type=st_arg) or []
+        except Exception as exc:
+            logger.warning("API error fetching season %d for %s: %s", check_season, team, exc)
+            break
+
+        season_results: list[GameResult] = []
+        for g in raw:
+            is_home = g.home_team == team
+            team_score = g.home_points if is_home else g.away_points
+            opp_score  = g.away_points if is_home else g.home_points
+
+            # Only include completed games
+            if team_score is None or opp_score is None:
+                continue
+
+            opponent = g.away_team if is_home else g.home_team
+            result = ""
+            if team_score > opp_score:
+                result = "W"
+            elif team_score < opp_score:
+                result = "L"
+            else:
+                result = "T"
+
+            game_date: datetime.datetime | None = None
+            start_time_utc: datetime.datetime | None = None
+            time_tbd: bool = bool(g.start_time_tbd)
+
+            if g.start_date:
+                try:
+                    if isinstance(g.start_date, datetime.datetime):
+                        start_time_utc = g.start_date
+                    else:
+                        start_time_utc = datetime.datetime.fromisoformat(
+                            str(g.start_date).replace("Z", "+00:00")
+                        )
+                    game_date = start_time_utc.replace(
+                        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+                    )
+                except Exception:
+                    pass
+
+            season_results.append(GameResult(
+                season=check_season,
+                week=g.week or 0,
+                date=game_date,
+                opponent=opponent or "",
+                is_home=is_home,
+                is_neutral=g.neutral_site or False,
+                team_score=team_score,
+                opp_score=opp_score,
+                result=result,
+                notes=g.notes or "",
+                start_time_utc=start_time_utc,
+                time_tbd=time_tbd,
+            ))
+
+        # Sort this season descending so the most-recent games come first,
+        # then extend the accumulator (most recent season is always at the front)
+        season_results.sort(
+            key=lambda r: (r.week or 99, r.date or datetime.datetime.min),
+            reverse=True,
+        )
+        all_results.extend(season_results)
+
+        if len(all_results) >= n:
+            break
+
+    if not all_results:
+        raise RuntimeError(f"No completed game data found for {team}.")
+
+    # all_results is newest-season-first, newest-game-within-season-first.
+    # Trim to the N most recent games.
+    trimmed = all_results[:n]
+
+    # Tally wins/losses from the trimmed set
+    for g in trimmed:
+        if g.result == "W":
+            total_wins += 1
+        elif g.result == "L":
+            total_losses += 1
+
+    # Apply user-requested sort order
+    trimmed.sort(
+        key=lambda r: (r.season, r.week or 99, r.date or datetime.datetime.min),
+        reverse=(date_sort == "desc"),
+    )
+
+    return GameRecordBlock(
+        team=team,
+        season=trimmed[0].season if trimmed else start_season,
+        total_wins=total_wins,
+        total_losses=total_losses,
+        as_of=datetime.datetime.now(),
+        games=trimmed,
+    )
+
+
+_last_n_cache: dict[tuple, tuple[datetime.datetime, GameRecordBlock]] = {}
+
+
+def fetch_last_n_across_seasons_cached(
+    team: str,
+    api_key: str,
+    n: int = 10,
+    date_sort: str = "desc",
+    season_type: str = "both",
+    ttl_minutes: int = 15,
+    max_seasons_back: int = 6,
+) -> GameRecordBlock:
+    key = (team, n, date_sort, season_type, max_seasons_back)
+    if key in _last_n_cache:
+        ts, block = _last_n_cache[key]
+        if (datetime.datetime.now() - ts).total_seconds() < ttl_minutes * 60:
+            return block
+    block = fetch_last_n_across_seasons(team, api_key, n, date_sort, season_type,
+                                        max_seasons_back)
+    _last_n_cache[key] = (datetime.datetime.now(), block)
+    return block
+
+
+def clear_game_record_last_n_cache() -> None:
+    _last_n_cache.clear()
+
+
 def fetch_game_record_cached(
     team: str,
     season: int,
@@ -256,3 +422,4 @@ def fetch_game_record_cached(
 
 def clear_game_record_cache() -> None:
     _cache.clear()
+    _last_n_cache.clear()

@@ -256,6 +256,7 @@ class SettingsTab(ttk.Frame):
             ("app.data.cfb_api",          "clear_standings_cache"),
             ("app.data.logo_cache",        "clear_logo_memory_cache"),
             ("app.data.game_record_api",   "clear_game_record_cache"),
+            ("app.data.game_record_api",   "clear_game_record_last_n_cache"),
             ("app.data.matchup_api",       "clear_matchup_cache"),
             ("app.data.roster_api",        "clear_roster_cache"),
             ("app.data.career_api",        "clear_career_cache"),

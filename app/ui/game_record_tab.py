@@ -42,8 +42,7 @@ class GameRecordTab(ttk.Frame):
 
     def _build_controls(self, p):
         self._build_card_size(p)
-        self._build_team_season(p)
-        self._build_query_opts(p)
+        self._build_mode(p)
         self._build_display_opts(p)
         self._build_bg_color(p)
         self._build_fetch_bar(p)
@@ -85,39 +84,91 @@ class GameRecordTab(ttk.Frame):
         else:
             self._w_spin.config(state="normal"); self._h_spin.config(state="normal")
 
-    def _build_team_season(self, p):
-        lf = ttk.LabelFrame(p, text="Team & Season")
-        lf.pack(fill="x", padx=8, pady=4)
-        r = ttk.Frame(lf); r.pack(fill="x", padx=6, pady=(6,2))
+    def _build_mode(self, p):
+        # --- Team ---
+        lf_team = ttk.LabelFrame(p, text="Team")
+        lf_team.pack(fill="x", padx=8, pady=4)
+        r = ttk.Frame(lf_team); r.pack(fill="x", padx=6, pady=6)
         ttk.Label(r, text="Team:").pack(side="left")
         self._team_var = tk.StringVar()
         self._team_cb = ttk.Combobox(r, textvariable=self._team_var, state="readonly", width=22)
-        self._team_cb.pack(side="left", padx=(4,0))
-        r2 = ttk.Frame(lf); r2.pack(fill="x", padx=6, pady=(2,2))
+        self._team_cb.pack(side="left", padx=(4, 0))
+
+        # --- Mode toggle ---
+        lf_mode = ttk.LabelFrame(p, text="Mode")
+        lf_mode.pack(fill="x", padx=8, pady=4)
+        self._mode_var = tk.StringVar(value="season")
+        r_mode = ttk.Frame(lf_mode); r_mode.pack(fill="x", padx=6, pady=4)
+        ttk.Radiobutton(r_mode, text="Season", variable=self._mode_var,
+                        value="season", command=self._on_mode).pack(side="left", padx=(0, 12))
+        ttk.Radiobutton(r_mode, text="Last N games", variable=self._mode_var,
+                        value="last_n", command=self._on_mode).pack(side="left")
+
+        # --- Season sub-section ---
+        self._season_frame = ttk.LabelFrame(p, text="Season Options")
+        self._season_frame.pack(fill="x", padx=8, pady=4)
+        r2 = ttk.Frame(self._season_frame); r2.pack(fill="x", padx=6, pady=(6, 2))
         ttk.Label(r2, text="Season:").pack(side="left")
         self._season_var = tk.StringVar()
         ttk.Spinbox(r2, from_=1970, to=datetime.datetime.now().year,
-                    textvariable=self._season_var, width=7).pack(side="left", padx=(4,8))
-        ttk.Label(r2, text="(0=most recent season)", foreground="#555555").pack(side="left")
-        r3 = ttk.Frame(lf); r3.pack(fill="x", padx=6, pady=(2,6))
+                    textvariable=self._season_var, width=7).pack(side="left", padx=(4, 8))
+        ttk.Label(r2, text="(0=most recent)", foreground="#555555").pack(side="left")
+        r3 = ttk.Frame(self._season_frame); r3.pack(fill="x", padx=6, pady=(2, 6))
         ttk.Label(r3, text="Season type:").pack(side="left")
         self._season_type_var = tk.StringVar(value="both")
-        ttk.Radiobutton(r3, text="Regular", variable=self._season_type_var, value="regular").pack(side="left", padx=(4,0))
-        ttk.Radiobutton(r3, text="Post",    variable=self._season_type_var, value="postseason").pack(side="left", padx=(4,0))
-        ttk.Radiobutton(r3, text="Both",    variable=self._season_type_var, value="both").pack(side="left", padx=(4,0))
+        ttk.Radiobutton(r3, text="Regular", variable=self._season_type_var,
+                        value="regular").pack(side="left", padx=(4, 0))
+        ttk.Radiobutton(r3, text="Post",    variable=self._season_type_var,
+                        value="postseason").pack(side="left", padx=(4, 0))
+        ttk.Radiobutton(r3, text="Both",    variable=self._season_type_var,
+                        value="both").pack(side="left", padx=(4, 0))
+
+        # --- Last N sub-section ---
+        self._lastn_frame = ttk.LabelFrame(p, text="Last N Options")
+        self._lastn_frame.pack(fill="x", padx=8, pady=4)
+        r4 = ttk.Frame(self._lastn_frame); r4.pack(fill="x", padx=6, pady=(6, 2))
+        ttk.Label(r4, text="N games:").pack(side="left")
+        self._n_var = tk.StringVar(value="10")
+        ttk.Spinbox(r4, from_=1, to=200, textvariable=self._n_var, width=5).pack(
+            side="left", padx=(4, 0))
+        r5 = ttk.Frame(self._lastn_frame); r5.pack(fill="x", padx=6, pady=(2, 2))
+        ttk.Label(r5, text="Season type:").pack(side="left")
+        self._lastn_season_type_var = tk.StringVar(value="both")
+        ttk.Radiobutton(r5, text="Regular", variable=self._lastn_season_type_var,
+                        value="regular").pack(side="left", padx=(4, 0))
+        ttk.Radiobutton(r5, text="Post",    variable=self._lastn_season_type_var,
+                        value="postseason").pack(side="left", padx=(4, 0))
+        ttk.Radiobutton(r5, text="Both",    variable=self._lastn_season_type_var,
+                        value="both").pack(side="left", padx=(4, 0))
+        r6 = ttk.Frame(self._lastn_frame); r6.pack(fill="x", padx=6, pady=(2, 2))
+        ttk.Label(r6, text="Date order:").pack(side="left")
+        self._sort_var = tk.StringVar(value="desc")
+        ttk.Radiobutton(r6, text="Newest first", variable=self._sort_var,
+                        value="desc").pack(side="left", padx=(4, 0))
+        ttk.Radiobutton(r6, text="Oldest first", variable=self._sort_var,
+                        value="asc").pack(side="left", padx=(4, 0))
+        r7 = ttk.Frame(self._lastn_frame); r7.pack(fill="x", padx=6, pady=(2, 6))
+        ttk.Label(r7, text="Seasons back (max):").pack(side="left")
+        self._max_seasons_var = tk.StringVar(value="6")
+        ttk.Spinbox(r7, from_=1, to=20, textvariable=self._max_seasons_var, width=4).pack(
+            side="left", padx=(4, 8))
+        ttk.Label(r7, text="seasons", foreground="#555555").pack(side="left")
+
+        self._on_mode()  # set initial visibility
+
+    def _on_mode(self):
+        if self._mode_var.get() == "season":
+            self._season_frame.pack(fill="x", padx=8, pady=4)
+            self._lastn_frame.pack_forget()
+        else:
+            self._season_frame.pack_forget()
+            self._lastn_frame.pack(fill="x", padx=8, pady=4)
+
+    def _build_team_season(self, p):
+        pass  # replaced by _build_mode
 
     def _build_query_opts(self, p):
-        lf = ttk.LabelFrame(p, text="Query Options")
-        lf.pack(fill="x", padx=8, pady=4)
-        r = ttk.Frame(lf); r.pack(fill="x", padx=6, pady=(6,2))
-        ttk.Label(r, text="Last N games:").pack(side="left")
-        self._n_var = tk.StringVar(value="10")
-        ttk.Spinbox(r, from_=1, to=50, textvariable=self._n_var, width=5).pack(side="left", padx=(4,0))
-        r2 = ttk.Frame(lf); r2.pack(fill="x", padx=6, pady=(2,6))
-        ttk.Label(r2, text="Date order:").pack(side="left")
-        self._sort_var = tk.StringVar(value="desc")
-        ttk.Radiobutton(r2, text="Newest first", variable=self._sort_var, value="desc").pack(side="left", padx=(4,0))
-        ttk.Radiobutton(r2, text="Oldest first", variable=self._sort_var, value="asc").pack(side="left", padx=(4,0))
+        pass  # replaced by _build_mode
 
     def _build_display_opts(self, p):
         lf = ttk.LabelFrame(p, text="Display Options")
@@ -146,6 +197,20 @@ class GameRecordTab(ttk.Frame):
                         variable=self._use_team_colors_var).pack(anchor="w", padx=8, pady=1)
         ttk.Checkbutton(lf, text="Show timestamp",
                         variable=self._show_ts_var).pack(anchor="w", padx=8, pady=(1, 4))
+        # Last-N-specific display options
+        self._year_in_date_lbl = ttk.Label(lf, text="Last N mode options:",
+                                            foreground="#555555")
+        self._year_in_date_lbl.pack(anchor="w", padx=8, pady=(4, 0))
+        self._show_year_in_date_var  = tk.BooleanVar(value=False)
+        self._show_season_breaks_var = tk.BooleanVar(value=True)
+        self._cb_year_in_date = ttk.Checkbutton(
+            lf, text="Show year in date (e.g. Sep 06 '25)",
+            variable=self._show_year_in_date_var)
+        self._cb_year_in_date.pack(anchor="w", padx=16, pady=1)
+        self._cb_season_breaks = ttk.Checkbutton(
+            lf, text="Show season break rows",
+            variable=self._show_season_breaks_var)
+        self._cb_season_breaks.pack(anchor="w", padx=16, pady=(1, 4))
 
     def _build_bg_color(self, p):
         lf = ttk.LabelFrame(p, text="Background Color")
@@ -225,20 +290,32 @@ class GameRecordTab(ttk.Frame):
 
     def _fetch_thread(self, bypass):
         try:
-            from app.data.game_record_api import fetch_game_record, fetch_game_record_cached
+            from app.data.game_record_api import (
+                fetch_game_record, fetch_game_record_cached,
+                fetch_last_n_across_seasons, fetch_last_n_across_seasons_cached,
+            )
             from app.cards.game_record_card import GameRecordCardRenderer
-            team   = self._team_var.get()
+            team = self._team_var.get()
             if not team: raise ValueError("Please select a team.")
-            season = self._int(self._season_var, 0)
-            n      = self._int(self._n_var, 10)
-            sort   = self._sort_var.get()
-            st     = self._season_type_var.get()
-            key    = self.settings.cfbd_api_key
-            ttl    = self.settings.data_cache_ttl_minutes
-            block  = fetch_game_record(team, season, key, n, sort, "last_n", st) if bypass \
-                     else fetch_game_record_cached(team, season, key, n, sort, "last_n", st, ttl)
-            cfg    = self._build_config()
-            img    = GameRecordCardRenderer().render(block, cfg, self.settings.working_dir)
+            key = self.settings.cfbd_api_key
+            ttl = self.settings.data_cache_ttl_minutes
+            mode = self._mode_var.get()
+
+            if mode == "season":
+                season = self._int(self._season_var, 0)
+                st     = self._season_type_var.get()
+                block  = fetch_game_record(team, season, key, 999, "asc", "full_season", st) if bypass \
+                         else fetch_game_record_cached(team, season, key, 999, "asc", "full_season", st, ttl)
+            else:
+                n    = self._int(self._n_var, 10)
+                sort = self._sort_var.get()
+                st   = self._lastn_season_type_var.get()
+                msb  = self._int(self._max_seasons_var, 6)
+                block = fetch_last_n_across_seasons(team, key, n, sort, st, msb) if bypass \
+                        else fetch_last_n_across_seasons_cached(team, key, n, sort, st, ttl, msb)
+
+            cfg = self._build_config()
+            img = GameRecordCardRenderer().render(block, cfg, self.settings.working_dir)
             self.after(0, lambda: self._done(img, None))
         except Exception as exc:
             logger.exception("Team Record fetch/render failed")
@@ -295,6 +372,7 @@ class GameRecordTab(ttk.Frame):
     def _build_config(self):
         from app.cards.game_record_card import GameRecordCardConfig
         team = self._team_var.get()
+        mode = self._mode_var.get()
         cfg = GameRecordCardConfig(
             width_in=self._float(self._w_var, 6.0),
             height_in=self._float(self._h_var, 8.0),
@@ -304,11 +382,13 @@ class GameRecordTab(ttk.Frame):
             show_summary=self._show_summary_var.get(),
             show_timestamp=self._show_ts_var.get(),
             use_team_colors=self._use_team_colors_var.get(),
-            show_week=False,
+            show_week=(mode == "season"),
             show_scores=self._show_scores_var.get(),
             show_ha_col=self._show_ha_col_var.get(),
             show_time=self._show_time_var.get(),
             show_opp_logos=self._show_opp_logos_var.get(),
+            show_year_in_date=(mode == "last_n" and self._show_year_in_date_var.get()),
+            show_season_breaks=(mode == "last_n" and self._show_season_breaks_var.get()),
             timezone=getattr(self.settings, "display_timezone", "ET"),
             team=team,
         )
@@ -332,11 +412,14 @@ class GameRecordTab(ttk.Frame):
         self._w_var.set(str(s.game_record_width_in))
         self._h_var.set(str(s.game_record_height_in))
         self._global_var.set(s.game_record_use_global_size)
-        self._season_var.set(str(s.game_record_season))
         self._team_var.set(s.game_record_team)
+        self._mode_var.set(getattr(s, "game_record_mode", "season"))
+        self._season_var.set(str(s.game_record_season))
+        self._season_type_var.set(getattr(s, "game_record_season_type", "both"))
         self._n_var.set(str(s.game_record_n))
         self._sort_var.set(s.game_record_date_sort)
-        self._season_type_var.set(getattr(s, "game_record_season_type", "both"))
+        self._lastn_season_type_var.set(getattr(s, "game_record_lastn_season_type", "both"))
+        self._max_seasons_var.set(str(getattr(s, "game_record_max_seasons_back", 6)))
         self._show_logo_var.set(s.game_record_show_logos)
         self._show_opp_logos_var.set(s.game_record_show_opp_logos)
         self._show_scores_var.set(getattr(s, "game_record_show_scores", True))
@@ -345,9 +428,12 @@ class GameRecordTab(ttk.Frame):
         self._show_summary_var.set(s.game_record_show_summary)
         self._show_ts_var.set(s.game_record_show_timestamp)
         self._use_team_colors_var.set(s.game_record_use_team_colors)
+        self._show_year_in_date_var.set(getattr(s, "game_record_show_year_in_date", False))
+        self._show_season_breaks_var.set(getattr(s, "game_record_show_season_breaks", True))
         self._bg_var.set(s.game_record_bg_color)
         self._fname_var.set(s.game_record_export_filename)
         self._append_ts_var.set(s.game_record_append_timestamp)
+        self._on_mode()
         self._on_global(); self._on_size()
 
     def apply(self):
@@ -355,11 +441,14 @@ class GameRecordTab(ttk.Frame):
         s.game_record_width_in         = self._float(self._w_var, 6.0)
         s.game_record_height_in        = self._float(self._h_var, 8.0)
         s.game_record_use_global_size  = self._global_var.get()
-        s.game_record_season           = self._int(self._season_var, 0)
         s.game_record_team             = self._team_var.get()
+        s.game_record_mode             = self._mode_var.get()
+        s.game_record_season           = self._int(self._season_var, 0)
+        s.game_record_season_type      = self._season_type_var.get()
         s.game_record_n                = self._int(self._n_var, 10)
         s.game_record_date_sort        = self._sort_var.get()
-        s.game_record_season_type      = self._season_type_var.get()
+        s.game_record_lastn_season_type = self._lastn_season_type_var.get()
+        s.game_record_max_seasons_back = self._int(self._max_seasons_var, 6)
         s.game_record_show_logos       = self._show_logo_var.get()
         s.game_record_show_opp_logos   = self._show_opp_logos_var.get()
         s.game_record_show_scores      = self._show_scores_var.get()
@@ -368,6 +457,8 @@ class GameRecordTab(ttk.Frame):
         s.game_record_show_summary     = self._show_summary_var.get()
         s.game_record_show_timestamp   = self._show_ts_var.get()
         s.game_record_use_team_colors  = self._use_team_colors_var.get()
+        s.game_record_show_year_in_date  = self._show_year_in_date_var.get()
+        s.game_record_show_season_breaks = self._show_season_breaks_var.get()
         s.game_record_bg_color         = self._bg_var.get()
         s.game_record_export_filename  = self._fname_var.get().strip()
         s.game_record_append_timestamp = self._append_ts_var.get()
