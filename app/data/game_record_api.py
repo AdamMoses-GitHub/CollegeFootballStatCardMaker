@@ -19,6 +19,13 @@ def _schedule_season() -> int:
     return datetime.datetime.now().year
 
 
+def _source_date(start_time_utc: datetime.datetime) -> datetime.datetime:
+    """Preserve the calendar date supplied with a game timestamp."""
+    return start_time_utc.replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -139,10 +146,7 @@ def fetch_game_record(
                         str(g.start_date).replace("Z", "+00:00")
                     )
                 # Date (day only) for display — strip time component
-                game_date = start_time_utc.replace(
-                    hour=0, minute=0, second=0, microsecond=0,
-                    tzinfo=None,
-                )
+                game_date = _source_date(start_time_utc)
             except Exception:
                 pass
 
@@ -194,8 +198,8 @@ def _enrich_schedule_times(
 ) -> None:
     """Fill missing upcoming CFBD kickoff times from ESPN when available."""
     try:
-        from app.data.espn_schedule_api import _date_key, fetch_espn_schedule
-        from app.data.logo_cache import get_espn_id
+        from app.data.espn_schedule_api import fetch_espn_schedule
+        from app.data.logo_cache import get_espn_id, slugify
 
         espn_id = get_espn_id(team, working_dir)
         if espn_id is None:
@@ -204,18 +208,27 @@ def _enrich_schedule_times(
         for game in results:
             if game.is_bye or game.team_score is not None:
                 continue
-            if game.start_time_utc is not None and not game.time_tbd:
+            if (
+                game.start_time_utc is not None
+                and not game.time_tbd
+            ):
                 continue
             date_key = (
-                _date_key(game.start_time_utc)
+                game.date.strftime("%Y-%m-%d")
                 if game.start_time_utc is not None
                 else game.date.strftime("%Y-%m-%d") if game.date else None
             )
             if date_key is None:
                 continue
-            espn_time, time_valid = times.get(date_key, (None, False))
+            espn_time, time_valid, team_slugs = times.get(date_key, (None, False, set()))
+            opponent_slug = slugify(game.opponent)
+            if not team_slugs or "__legacy_cache__" in team_slugs:
+                continue
+            if opponent_slug not in team_slugs:
+                continue
             if time_valid and espn_time:
                 game.start_time_utc = espn_time
+                game.date = _source_date(espn_time)
                 game.time_tbd = False
     except Exception:
         logger.debug("Could not enrich %s %s schedule times from ESPN", season, team)
@@ -347,9 +360,7 @@ def fetch_last_n_across_seasons(
                         start_time_utc = datetime.datetime.fromisoformat(
                             str(g.start_date).replace("Z", "+00:00")
                         )
-                    game_date = start_time_utc.replace(
-                        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
-                    )
+                    game_date = _source_date(start_time_utc)
                 except Exception:
                     pass
 

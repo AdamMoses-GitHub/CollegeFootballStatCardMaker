@@ -67,8 +67,7 @@ _FOOTER_PCT = 0.07
 
 # ---------------------------------------------------------------------------
 # Timezone offset map  (standard_hours, daylight_hours)
-# DST heuristic: months 3–11 (Mar–Nov) use daylight offset
-# Used only when zoneinfo is unavailable (Python < 3.9).
+# Used only when zoneinfo/tzdata is unavailable.
 # ---------------------------------------------------------------------------
 _TZ_OFFSETS: dict[str, tuple[int, int]] = {
     "ET":  (-5, -4),
@@ -109,10 +108,32 @@ def _utc_to_local(utc_dt: "datetime.datetime", timezone: str) -> "datetime.datet
             return utc_dt.astimezone(_ZoneInfo(iana))
         except Exception:
             pass
-    # Fallback: simple DST heuristic
+    # Fallback: approximate US DST rules for schedule display only.
     std_off, dst_off = _TZ_OFFSETS.get(timezone, (-5, -4))
-    offset = dst_off if 3 <= utc_dt.month <= 11 else std_off
+    observes_dst = timezone not in ("HT", "UTC")
+    offset = dst_off if observes_dst and _is_us_dst_utc(utc_dt) else std_off
     return utc_dt + _dt.timedelta(hours=offset)
+
+
+def _nth_weekday(year: int, month: int, weekday: int, nth: int) -> datetime.date:
+    """Return the nth weekday in a given month; Monday is 0."""
+    import datetime as _dt
+    first = _dt.date(year, month, 1)
+    days_until_weekday = (weekday - first.weekday()) % 7
+    return first + _dt.timedelta(days=days_until_weekday + 7 * (nth - 1))
+
+
+def _is_us_dst_utc(utc_dt: "datetime.datetime") -> bool:
+    """Approximate US daylight-saving period in UTC for fallback conversion."""
+    import datetime as _dt
+    year = utc_dt.year
+    dst_start = _dt.datetime.combine(
+        _nth_weekday(year, 3, 6, 2), _dt.time(7, 0), tzinfo=_dt.timezone.utc
+    )
+    dst_end = _dt.datetime.combine(
+        _nth_weekday(year, 11, 6, 1), _dt.time(6, 0), tzinfo=_dt.timezone.utc
+    )
+    return dst_start <= utc_dt < dst_end
 
 
 # ---------------------------------------------------------------------------
@@ -123,19 +144,26 @@ def _format_game_time(game, timezone: str = "ET") -> str:
     """Return a formatted kickoff time string in the given timezone, or 'TBD'."""
     if game.start_time_utc is None:
         return "TBD"
+    if game.time_tbd:
+        return "TBD"
     try:
         local = _utc_to_local(game.start_time_utc, timezone)
         h = local.hour
         m = local.minute
-        # Sentinel guard: cfbd uses midnight-ish placeholders even when time
-        # is TBD. After timezone conversion games should never start before 9 AM.
-        if h < 9:
-            return "TBD"
         ampm = "PM" if h >= 12 else "AM"
         h12 = h % 12 or 12
         return f"{h12}:{m:02d} {ampm} {timezone}"
     except Exception:
         return "TBD"
+
+
+def _display_game_date(game, timezone: str) -> datetime.datetime:
+    """Return a game date in the selected timezone when kickoff is confirmed."""
+    if game.start_time_utc is not None and not game.time_tbd:
+        return _utc_to_local(game.start_time_utc, timezone).replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+        )
+    return game.date
 
 
 def _truncate_to_width(draw, text: str, font, max_width: int) -> str:
@@ -407,12 +435,12 @@ class GameRecordCardRenderer:
         values = {
             "WK":     str(game.week) if game.week else "",
             "DATE":   (
-                (game.date.strftime("%a %b %d '%y") if config.show_day_of_week
-                 else game.date.strftime("%b %d '%y"))
+                (_display_game_date(game, config.timezone).strftime("%a %b %d '%y") if config.show_day_of_week
+                 else _display_game_date(game, config.timezone).strftime("%b %d '%y"))
                 if game.date and config.show_year_in_date
                 else
-                (game.date.strftime("%a %b %d") if config.show_day_of_week
-                 else game.date.strftime("%b %d")) if game.date else f"Wk {game.week}"
+                (_display_game_date(game, config.timezone).strftime("%a %b %d") if config.show_day_of_week
+                 else _display_game_date(game, config.timezone).strftime("%b %d")) if game.date else f"Wk {game.week}"
             ),
             "OPP":    opp_display,
             "H/A":    "N" if game.is_neutral else ("H" if game.is_home else "A"),
