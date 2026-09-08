@@ -224,6 +224,8 @@ class Settings:
     schedule_show_logos: bool = True
     schedule_show_opp_logos: bool = False
     schedule_show_scores: bool = True
+    schedule_show_results: bool = True
+    schedule_result_placement: str = "column"
     schedule_show_ha_col: bool = False
     schedule_show_time: bool = True
     schedule_show_day_of_week: bool = False

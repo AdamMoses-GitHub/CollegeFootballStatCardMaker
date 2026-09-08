@@ -21,6 +21,7 @@ class GameRecordCardConfig(CardConfig):
     use_team_colors: bool = False
     show_week: bool       = False
     show_scores: bool     = True
+    show_results: bool    = True
     show_ha_col: bool     = True
     show_time: bool       = True
     show_opp_logos: bool  = False
@@ -29,6 +30,7 @@ class GameRecordCardConfig(CardConfig):
     show_byes: bool        = False
     show_year_in_date: bool = False
     show_season_breaks: bool = False
+    schedule_result_placement: str = "column"
     timezone: str         = "ET"
 
     title_bg: str      = "#1a3a5c"
@@ -103,7 +105,10 @@ def _utc_to_local(utc_dt: "datetime.datetime", timezone: str) -> "datetime.datet
         utc_dt = utc_dt.replace(tzinfo=_dt.timezone.utc)
     if _HAS_ZONEINFO:
         iana = _TZ_IANA.get(timezone, "America/New_York")
-        return utc_dt.astimezone(_ZoneInfo(iana))
+        try:
+            return utc_dt.astimezone(_ZoneInfo(iana))
+        except Exception:
+            pass
     # Fallback: simple DST heuristic
     std_off, dst_off = _TZ_OFFSETS.get(timezone, (-5, -4))
     offset = dst_off if 3 <= utc_dt.month <= 11 else std_off
@@ -116,11 +121,8 @@ def _utc_to_local(utc_dt: "datetime.datetime", timezone: str) -> "datetime.datet
 
 def _format_game_time(game, timezone: str = "ET") -> str:
     """Return a formatted kickoff time string in the given timezone, or 'TBD'."""
-    if game.time_tbd or game.start_time_utc is None:
+    if game.start_time_utc is None:
         return "TBD"
-    # Only show time for upcoming games; completed games show score instead
-    if game.team_score is not None:
-        return ""
     try:
         local = _utc_to_local(game.start_time_utc, timezone)
         h = local.hour
@@ -134,6 +136,22 @@ def _format_game_time(game, timezone: str = "ET") -> str:
         return f"{h12}:{m:02d} {ampm} {timezone}"
     except Exception:
         return "TBD"
+
+
+def _truncate_to_width(draw, text: str, font, max_width: int) -> str:
+    """Shorten text with an ellipsis so it fits within a table cell."""
+    if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+        return text
+    ellipsis = "..."
+    if draw.textbbox((0, 0), ellipsis, font=font)[2] > max_width:
+        return ""
+    shortened = text
+    while shortened:
+        shortened = shortened[:-1].rstrip()
+        candidate = f"{shortened}{ellipsis}"
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+            return candidate
+    return ellipsis
 
 
 class GameRecordCardRenderer:
@@ -152,9 +170,10 @@ class GameRecordCardRenderer:
         # Filter out bye weeks if the toggle is off
         games = [g for g in block.games if not g.is_bye] if not config.show_byes else block.games
 
-        title_h  = round(H * _TITLE_PCT)
+        title_summary = config.show_summary
+        title_h  = round(H * (_TITLE_PCT + 0.02 if title_summary else _TITLE_PCT))
         header_h = round(H * _HEADER_PCT)
-        has_footer = config.show_summary or config.show_timestamp
+        has_footer = config.show_timestamp
         footer_h = round(H * _FOOTER_PCT) if has_footer else 0
 
         data_h  = H - title_h - header_h - footer_h
@@ -208,6 +227,13 @@ class GameRecordCardRenderer:
             base = [c for c in base if c != "TIME"]
         if config.combine_result_score:
             base = [c for c in base if c != "RESULT"]
+        elif config.show_week:
+            if config.schedule_result_placement == "opponent":
+                base = [c for c in base if c not in ("RESULT", "SCORE")]
+            else:
+                base = [c for c in base if c != "SCORE"]
+            if not config.show_results and not config.show_scores:
+                base = [c for c in base if c != "RESULT"]
         return base
 
     def _col_widths(self, total_w: int, cols: list[str]) -> list[int]:
@@ -249,7 +275,8 @@ class GameRecordCardRenderer:
     def _draw_title(self, draw, img, block, config, W, title_h, working_dir):
         draw.rectangle([0, 0, W - 1, title_h - 1], fill=config.title_bg)
 
-        logo_sz   = round(title_h * 0.75)
+        title_summary = config.show_summary
+        logo_sz   = round(title_h * (0.65 if title_summary else 0.75))
         inner_gap = round(title_h * 0.10)
         logo      = None
         if config.show_logo:
@@ -258,17 +285,22 @@ class GameRecordCardRenderer:
 
         title_text = f"{block.season} {block.team}"
         sub_text   = "Season Schedule" if config.show_week else "Game Results"
-        tf  = get_font(max(11, round(title_h * 0.36)), bold=True)
-        sf  = get_font(max(8,  round(title_h * 0.22)), italic=True)
+        summary_text = f"Season Record: {block.total_wins}–{block.total_losses}" if title_summary else ""
+        tf  = get_font(max(11, round(title_h * (0.30 if title_summary else 0.36))), bold=True)
+        sf  = get_font(max(8,  round(title_h * (0.18 if title_summary else 0.22))), italic=True)
+        rf  = get_font(max(8, round(title_h * 0.16))) if title_summary else None
         tb  = draw.textbbox((0, 0), title_text, font=tf)
         sb  = draw.textbbox((0, 0), sub_text,   font=sf)
-        text_w = max(tb[2]-tb[0], sb[2]-sb[0])
+        rb  = draw.textbbox((0, 0), summary_text, font=rf) if rf else (0, 0, 0, 0)
+        text_w = max(tb[2]-tb[0], sb[2]-sb[0], rb[2]-rb[0])
         gap    = round(title_h * 0.05)
 
         block_w = (logo_sz + inner_gap + text_w) if logo else text_w
         start_x = (W - block_w) // 2
 
         tot = (tb[3]-tb[1]) + gap + (sb[3]-sb[1])
+        if rf:
+            tot += gap + (rb[3]-rb[1])
         ty  = (title_h - tot) // 2
 
         if logo:
@@ -282,13 +314,17 @@ class GameRecordCardRenderer:
                   title_text, font=tf, fill=config.title_fg)
         draw.text((text_start_x + (text_w - (sb[2]-sb[0])) // 2, ty + (tb[3]-tb[1]) + gap),
                   sub_text, font=sf, fill=config.title_fg)
+        if rf:
+            summary_y = ty + (tb[3]-tb[1]) + gap + (sb[3]-sb[1]) + gap
+            draw.text((text_start_x + (text_w - (rb[2]-rb[0])) // 2, summary_y),
+                      summary_text, font=rf, fill=config.title_fg)
 
     def _draw_header(self, draw, cols, col_widths, config, y, header_h, W):
         draw.rectangle([0, y, W - 1, y + header_h - 1], fill=config.header_bg)
         font = get_font(max(7, round(header_h * 0.48)), bold=True, condensed=True)
         xs   = self._col_xs(col_widths)
         labels = {"WK": "WK", "DATE": "DATE", "OPP": "OPPONENT", "H/A": "H/A",
-                  "RESULT": "W/L",
+                  "RESULT": "RESULT" if config.show_week else "W/L",
                   "SCORE": "RESULT" if config.combine_result_score else "SCORE"}
         for i, col in enumerate(cols):
             col_x = xs[i]
@@ -307,6 +343,8 @@ class GameRecordCardRenderer:
     def _row_bg(self, game: GameResult, config: GameRecordCardConfig, idx: int) -> str:
         if game.is_bye:
             return "#E8E8E8"
+        if config.show_week and not config.show_results:
+            return config.row_color if idx % 2 == 0 else config.row_alt_color
         if game.result == "W":
             return config.win_bg
         if game.result == "L":
@@ -317,6 +355,8 @@ class GameRecordCardRenderer:
 
     def _draw_row(self, draw, img, game: GameResult, cols, col_widths, config, y, row_h, working_dir):
         font_sz = max(7, round(row_h * 0.48))
+        if config.show_week and row_h > 250:
+            font_sz = min(font_sz, 48)
         font    = get_font(font_sz)
         font_b  = get_font(font_sz, bold=True)
         xs      = self._col_xs(col_widths)
@@ -349,6 +389,20 @@ class GameRecordCardRenderer:
                 opp_display = game.opponent
         else:
             opp_display = game.opponent
+        if config.show_week and config.schedule_result_placement in ("opponent", "both"):
+            inline_parts = []
+            if config.show_results and game.result:
+                inline_parts.append(game.result)
+            if config.show_scores and game.team_score is not None:
+                inline_parts.append(f"{game.team_score}–{game.opp_score}")
+            if inline_parts:
+                opp_display = f"{opp_display} ({', '.join(inline_parts)})"
+        result_parts = []
+        if config.show_results:
+            result_parts.append(game.result or ("TBD" if is_upcoming else "—"))
+        if config.show_scores and game.team_score is not None:
+            result_parts.append(f"{game.team_score}–{game.opp_score}")
+        result_display = ", ".join(result_parts)
         result_prefix = {"W": "(W) ", "L": "(L) ", "T": "(T) "}
         values = {
             "WK":     str(game.week) if game.week else "",
@@ -363,7 +417,7 @@ class GameRecordCardRenderer:
             "OPP":    opp_display,
             "H/A":    "N" if game.is_neutral else ("H" if game.is_home else "A"),
             "TIME":   _format_game_time(game, config.timezone),
-            "RESULT": game.result if game.result else ("TBD" if is_upcoming else "—"),
+            "RESULT": result_display,
             "SCORE":  (
                 (result_prefix.get(game.result, "") + f"{game.team_score}–{game.opp_score}")
                 if game.team_score is not None and config.combine_result_score
@@ -385,7 +439,7 @@ class GameRecordCardRenderer:
 
             color = config.text_color
             if col == "RESULT":
-                color = result_colors.get(val, config.text_color)
+                color = result_colors.get(game.result, config.text_color)
             if col == "SCORE" and config.combine_result_score:
                 color = result_colors.get(game.result, config.text_color)
 
@@ -400,6 +454,7 @@ class GameRecordCardRenderer:
                         ly = y + (row_h - logo_sz) // 2
                         img.paste(logo, (tx, ly), logo)
                         tx += logo_sz + _CELL_PAD
+                val = _truncate_to_width(draw, val, use_font, col_x + col_w - tx - _CELL_PAD)
                 draw.text((tx, ty), val, font=use_font, fill=color)
             else:
                 tx = col_x + (col_w - tw) // 2
@@ -411,9 +466,6 @@ class GameRecordCardRenderer:
     def _draw_footer(self, draw, block, config, fy, footer_h, W):
         font  = get_font(max(8, round(footer_h * 0.32)), italic=True)
         lines = []
-
-        if config.show_summary:
-            lines.append(f"Season Record: {block.total_wins}–{block.total_losses}")
 
         if config.show_timestamp:
             lines.append(block.as_of.strftime("Data as of: %b %d, %Y  %I:%M %p"))

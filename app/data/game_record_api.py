@@ -62,6 +62,7 @@ def fetch_game_record(
     date_sort: str = "desc",
     mode: str = "last_n",        # "last_n" | "full_season"
     season_type: str = "regular", # "regular" | "postseason" | "both"
+    working_dir: str | None = None,
 ) -> GameRecordBlock:
     if not api_key:
         raise ValueError("No CFBD API key configured. Add your key in Settings.")
@@ -160,6 +161,9 @@ def fetch_game_record(
             time_tbd=time_tbd,
         ))
 
+    if mode == "full_season" and working_dir:
+        _enrich_schedule_times(results, team, effective_season, working_dir)
+
     # Sort — full season always ascending (chronological); last_n respects user choice
     effective_sort = "asc" if mode == "full_season" else date_sort
     results.sort(
@@ -183,6 +187,38 @@ def fetch_game_record(
         as_of=datetime.datetime.now(),
         games=results,
     )
+
+
+def _enrich_schedule_times(
+    results: list[GameResult], team: str, season: int, working_dir: str
+) -> None:
+    """Fill missing upcoming CFBD kickoff times from ESPN when available."""
+    try:
+        from app.data.espn_schedule_api import _date_key, fetch_espn_schedule
+        from app.data.logo_cache import get_espn_id
+
+        espn_id = get_espn_id(team, working_dir)
+        if espn_id is None:
+            return
+        times = fetch_espn_schedule(espn_id, season, working_dir)
+        for game in results:
+            if game.is_bye or game.team_score is not None:
+                continue
+            if game.start_time_utc is not None and not game.time_tbd:
+                continue
+            date_key = (
+                _date_key(game.start_time_utc)
+                if game.start_time_utc is not None
+                else game.date.strftime("%Y-%m-%d") if game.date else None
+            )
+            if date_key is None:
+                continue
+            espn_time, time_valid = times.get(date_key, (None, False))
+            if time_valid and espn_time:
+                game.start_time_utc = espn_time
+                game.time_tbd = False
+    except Exception:
+        logger.debug("Could not enrich %s %s schedule times from ESPN", season, team)
 
 
 # ---------------------------------------------------------------------------
@@ -409,13 +445,14 @@ def fetch_game_record_cached(
     mode: str = "last_n",
     season_type: str = "regular",
     ttl_minutes: int = 15,
+    working_dir: str | None = None,
 ) -> GameRecordBlock:
-    key = (team, season, n, date_sort, mode, season_type)
+    key = (team, season, n, date_sort, mode, season_type, working_dir)
     if key in _cache:
         ts, block = _cache[key]
         if (datetime.datetime.now() - ts).total_seconds() < ttl_minutes * 60:
             return block
-    block = fetch_game_record(team, season, api_key, n, date_sort, mode, season_type)
+    block = fetch_game_record(team, season, api_key, n, date_sort, mode, season_type, working_dir)
     _cache[key] = (datetime.datetime.now(), block)
     return block
 
