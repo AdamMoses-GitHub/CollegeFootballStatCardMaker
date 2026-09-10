@@ -118,9 +118,6 @@ def _format_game_time(game, timezone: str = "ET") -> str:
     """Return a formatted kickoff time string in the given timezone, or 'TBD'."""
     if game.time_tbd or game.start_time_utc is None:
         return "TBD"
-    # Only show time for upcoming games; completed games show score instead
-    if game.team_score is not None:
-        return ""
     try:
         local = _utc_to_local(game.start_time_utc, timezone)
         h = local.hour

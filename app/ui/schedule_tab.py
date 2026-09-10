@@ -163,6 +163,8 @@ class ScheduleTab(ttk.Frame):
         self._full_btn.pack(side="left")
         self._status = ttk.Label(p, text="", foreground="#aa2200", wraplength=260, justify="left")
         self._status.pack(fill="x", padx=8, pady=4)
+        self._updated_lbl = ttk.Label(p, text="", foreground="#555555", wraplength=260, justify="left")
+        self._updated_lbl.pack(fill="x", padx=8, pady=(0, 4))
 
     def _build_export(self, p):
         lf = ttk.LabelFrame(p, text="Export")
@@ -225,13 +227,13 @@ class ScheduleTab(ttk.Frame):
 
             cfg   = self._build_config(force_hide_time=times_unavailable)
             img   = GameRecordCardRenderer().render(block, cfg, self.settings.working_dir)
-            self.after(0, lambda m=times_unavailable: self._done(img, None, m))
+            self.after(0, lambda m=times_unavailable, ts=block.as_of, b=bypass: self._done(img, None, m, ts, b))
         except Exception as exc:
             logger.exception("Schedule fetch/render failed")
             msg = str(exc)
             self.after(0, lambda m=msg: self._done(None, m, False))
 
-    def _done(self, img, err, times_unavailable=False):
+    def _done(self, img, err, times_unavailable=False, as_of=None, bypass=False):
         self._fetching = False
         self._fetch_btn.config(state="normal"); self._refresh_btn.config(state="normal")
         if err:
@@ -244,6 +246,12 @@ class ScheduleTab(ttk.Frame):
             )
         else:
             self._status.config(text="", foreground="#aa2200")
+        if as_of is not None:
+            source = "fresh fetch" if bypass else f"cached, refreshes every {self.settings.data_cache_ttl_minutes} min"
+            self._updated_lbl.config(
+                text=as_of.strftime(f"Data fetched: %b %d, %Y %I:%M %p ({source}). "
+                                     "Use ↺ Refresh if the schedule has changed.")
+            )
         self._full_btn.config(state="normal")
         self._png_btn.config(state="normal"); self._jpg_btn.config(state="normal")
         self._update_thumb()
