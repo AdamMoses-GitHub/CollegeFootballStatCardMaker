@@ -217,6 +217,11 @@ class Settings:
     game_record_max_seasons_back: int = 6
     game_record_show_year_in_date: bool = False
     game_record_show_season_breaks: bool = True
+    game_record_show_results: bool = True
+    game_record_result_placement: str = "column"
+    game_record_time_placement: str = "column"
+    game_record_column_order: str = "date"
+    game_record_show_day_of_week: bool = False
 
     # ---- Schedule ----
     schedule_team: str = "Alabama"
@@ -226,6 +231,8 @@ class Settings:
     schedule_show_scores: bool = True
     schedule_show_results: bool = True
     schedule_result_placement: str = "column"
+    schedule_time_placement: str = "column"
+    schedule_column_order: str = "schedule"
     schedule_show_ha_col: bool = False
     schedule_show_time: bool = True
     schedule_show_day_of_week: bool = False

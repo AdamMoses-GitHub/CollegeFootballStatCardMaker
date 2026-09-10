@@ -9,9 +9,8 @@ logger = logging.getLogger(__name__)
 
 
 def _current_season() -> int:
-    """Last completed CFB season (used for game record / last-N mode)."""
-    now = datetime.datetime.now()
-    return now.year if now.month >= 8 else now.year - 1
+    """Most recently completed CFB season for Team Record data."""
+    return datetime.datetime.now().year - 1
 
 
 def _schedule_season() -> int:
@@ -67,12 +66,18 @@ def fetch_game_record(
     api_key: str,
     n: int = 10,
     date_sort: str = "desc",
-    mode: str = "last_n",        # "last_n" | "full_season"
+    mode: str = "last_n",        # "last_n" | "season" | "full_season"
     season_type: str = "regular", # "regular" | "postseason" | "both"
     working_dir: str | None = None,
 ) -> GameRecordBlock:
     if not api_key:
         raise ValueError("No CFBD API key configured. Add your key in Settings.")
+
+    latest_completed = _current_season()
+    if mode == "season" and season > latest_completed:
+        raise ValueError(
+            f"Team Record only supports completed seasons through {latest_completed}."
+        )
 
     try:
         import cfbd
@@ -132,6 +137,9 @@ def fetch_game_record(
             else:
                 result = "T"
 
+        if mode == "season" and (team_score is None or opp_score is None):
+            continue
+
         # start_date is already a datetime object from cfbd 5.x
         game_date: datetime.datetime | None = None
         start_time_utc: datetime.datetime | None = None
@@ -167,6 +175,9 @@ def fetch_game_record(
 
     if mode == "full_season" and working_dir:
         _enrich_schedule_times(results, team, effective_season, working_dir)
+
+    if mode == "season" and not results:
+        raise RuntimeError(f"No completed game data found for {team} in {effective_season}.")
 
     # Sort — full season always ascending (chronological); last_n respects user choice
     effective_sort = "asc" if mode == "full_season" else date_sort
@@ -293,8 +304,8 @@ def fetch_last_n_across_seasons(
 ) -> GameRecordBlock:
     """Fetch the last N *completed* games for a team, crossing season boundaries.
 
-    Starts from the most recently completed season and works backward until
-    N games have been accumulated or max_seasons_back seasons have been searched.
+    Starts from the current season and works backward until N completed games
+    have been accumulated or max_seasons_back seasons have been searched.
     Future (unplayed) games are excluded.
     """
     if not api_key:
@@ -319,7 +330,7 @@ def fetch_last_n_across_seasons(
 
     all_results: list[GameResult] = []
     total_wins = total_losses = 0
-    start_season = _current_season()
+    start_season = _schedule_season()
 
     for season_offset in range(max_seasons_back):
         check_season = start_season - season_offset
