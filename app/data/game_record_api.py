@@ -9,14 +9,20 @@ logger = logging.getLogger(__name__)
 
 
 def _current_season() -> int:
-    """Last completed CFB season (used for game record / last-N mode)."""
-    now = datetime.datetime.now()
-    return now.year if now.month >= 8 else now.year - 1
+    """Most recently completed CFB season for Team Record data."""
+    return datetime.datetime.now().year - 1
 
 
 def _schedule_season() -> int:
     """The upcoming/current calendar year (used for full-season schedule mode)."""
     return datetime.datetime.now().year
+
+
+def _source_date(start_time_utc: datetime.datetime) -> datetime.datetime:
+    """Preserve the calendar date supplied with a game timestamp."""
+    return start_time_utc.replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -60,11 +66,18 @@ def fetch_game_record(
     api_key: str,
     n: int = 10,
     date_sort: str = "desc",
-    mode: str = "last_n",        # "last_n" | "full_season"
+    mode: str = "last_n",        # "last_n" | "season" | "full_season"
     season_type: str = "regular", # "regular" | "postseason" | "both"
+    working_dir: str | None = None,
 ) -> GameRecordBlock:
     if not api_key:
         raise ValueError("No CFBD API key configured. Add your key in Settings.")
+
+    latest_completed = _current_season()
+    if mode == "season" and season > latest_completed:
+        raise ValueError(
+            f"Team Record only supports completed seasons through {latest_completed}."
+        )
 
     try:
         import cfbd
@@ -124,6 +137,9 @@ def fetch_game_record(
             else:
                 result = "T"
 
+        if mode == "season" and (team_score is None or opp_score is None):
+            continue
+
         # start_date is already a datetime object from cfbd 5.x
         game_date: datetime.datetime | None = None
         start_time_utc: datetime.datetime | None = None
@@ -138,10 +154,7 @@ def fetch_game_record(
                         str(g.start_date).replace("Z", "+00:00")
                     )
                 # Date (day only) for display — strip time component
-                game_date = start_time_utc.replace(
-                    hour=0, minute=0, second=0, microsecond=0,
-                    tzinfo=None,
-                )
+                game_date = _source_date(start_time_utc)
             except Exception:
                 pass
 
@@ -159,6 +172,12 @@ def fetch_game_record(
             start_time_utc=start_time_utc,
             time_tbd=time_tbd,
         ))
+
+    if mode == "full_season" and working_dir:
+        _enrich_schedule_times(results, team, effective_season, working_dir)
+
+    if mode == "season" and not results:
+        raise RuntimeError(f"No completed game data found for {team} in {effective_season}.")
 
     # Sort — full season always ascending (chronological); last_n respects user choice
     effective_sort = "asc" if mode == "full_season" else date_sort
@@ -183,6 +202,47 @@ def fetch_game_record(
         as_of=datetime.datetime.now(),
         games=results,
     )
+
+
+def _enrich_schedule_times(
+    results: list[GameResult], team: str, season: int, working_dir: str
+) -> None:
+    """Fill missing upcoming CFBD kickoff times from ESPN when available."""
+    try:
+        from app.data.espn_schedule_api import fetch_espn_schedule
+        from app.data.logo_cache import get_espn_id, slugify
+
+        espn_id = get_espn_id(team, working_dir)
+        if espn_id is None:
+            return
+        times = fetch_espn_schedule(espn_id, season, working_dir)
+        for game in results:
+            if game.is_bye or game.team_score is not None:
+                continue
+            if (
+                game.start_time_utc is not None
+                and not game.time_tbd
+            ):
+                continue
+            date_key = (
+                game.date.strftime("%Y-%m-%d")
+                if game.start_time_utc is not None
+                else game.date.strftime("%Y-%m-%d") if game.date else None
+            )
+            if date_key is None:
+                continue
+            espn_time, time_valid, team_slugs = times.get(date_key, (None, False, set()))
+            opponent_slug = slugify(game.opponent)
+            if not team_slugs or "__legacy_cache__" in team_slugs:
+                continue
+            if opponent_slug not in team_slugs:
+                continue
+            if time_valid and espn_time:
+                game.start_time_utc = espn_time
+                game.date = _source_date(espn_time)
+                game.time_tbd = False
+    except Exception:
+        logger.debug("Could not enrich %s %s schedule times from ESPN", season, team)
 
 
 # ---------------------------------------------------------------------------
@@ -244,8 +304,8 @@ def fetch_last_n_across_seasons(
 ) -> GameRecordBlock:
     """Fetch the last N *completed* games for a team, crossing season boundaries.
 
-    Starts from the most recently completed season and works backward until
-    N games have been accumulated or max_seasons_back seasons have been searched.
+    Starts from the current season and works backward until N completed games
+    have been accumulated or max_seasons_back seasons have been searched.
     Future (unplayed) games are excluded.
     """
     if not api_key:
@@ -270,7 +330,7 @@ def fetch_last_n_across_seasons(
 
     all_results: list[GameResult] = []
     total_wins = total_losses = 0
-    start_season = _current_season()
+    start_season = _schedule_season()
 
     for season_offset in range(max_seasons_back):
         check_season = start_season - season_offset
@@ -311,9 +371,7 @@ def fetch_last_n_across_seasons(
                         start_time_utc = datetime.datetime.fromisoformat(
                             str(g.start_date).replace("Z", "+00:00")
                         )
-                    game_date = start_time_utc.replace(
-                        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
-                    )
+                    game_date = _source_date(start_time_utc)
                 except Exception:
                     pass
 
@@ -409,13 +467,14 @@ def fetch_game_record_cached(
     mode: str = "last_n",
     season_type: str = "regular",
     ttl_minutes: int = 15,
+    working_dir: str | None = None,
 ) -> GameRecordBlock:
-    key = (team, season, n, date_sort, mode, season_type)
+    key = (team, season, n, date_sort, mode, season_type, working_dir)
     if key in _cache:
         ts, block = _cache[key]
         if (datetime.datetime.now() - ts).total_seconds() < ttl_minutes * 60:
             return block
-    block = fetch_game_record(team, season, api_key, n, date_sort, mode, season_type)
+    block = fetch_game_record(team, season, api_key, n, date_sort, mode, season_type, working_dir)
     _cache[key] = (datetime.datetime.now(), block)
     return block
 

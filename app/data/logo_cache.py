@@ -289,6 +289,14 @@ def _lookup_espn_id_dynamic(original_name: str, slug: str, working_dir: str) -> 
     return None
 
 
+def get_espn_id(team_name: str, working_dir: str) -> Optional[int]:
+    """Return ESPN's numeric team ID from the static map or dynamic cache."""
+    slug = slugify(team_name)
+    return TEAM_ESPN_ID_MAP.get(slug) or _lookup_espn_id_dynamic(
+        team_name, slug, working_dir
+    )
+
+
 # ---------------------------------------------------------------------------
 # Initials placeholder
 # ---------------------------------------------------------------------------

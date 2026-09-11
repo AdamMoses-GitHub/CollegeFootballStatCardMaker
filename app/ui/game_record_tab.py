@@ -110,9 +110,12 @@ class GameRecordTab(ttk.Frame):
         r2 = ttk.Frame(self._season_frame); r2.pack(fill="x", padx=6, pady=(6, 2))
         ttk.Label(r2, text="Season:").pack(side="left")
         self._season_var = tk.StringVar()
-        ttk.Spinbox(r2, from_=1970, to=datetime.datetime.now().year,
-                    textvariable=self._season_var, width=7).pack(side="left", padx=(4, 8))
-        ttk.Label(r2, text="(0=most recent)", foreground="#555555").pack(side="left")
+        self._season_spin = ttk.Spinbox(
+            r2, from_=1970, to=datetime.datetime.now().year - 1,
+            textvariable=self._season_var, width=7,
+        )
+        self._season_spin.pack(side="left", padx=(4, 8))
+        ttk.Label(r2, text="(0=most recent completed)", foreground="#555555").pack(side="left")
         r3 = ttk.Frame(self._season_frame); r3.pack(fill="x", padx=6, pady=(2, 6))
         ttk.Label(r3, text="Season type:").pack(side="left")
         self._season_type_var = tk.StringVar(value="both")
@@ -163,6 +166,11 @@ class GameRecordTab(ttk.Frame):
         else:
             self._season_frame.pack_forget()
             self._lastn_frame.pack(fill="x", padx=8, pady=4)
+        if hasattr(self, "_cb_year_in_date"):
+            state = "normal" if self._mode_var.get() == "last_n" else "disabled"
+            self._cb_year_in_date.config(state=state)
+            self._cb_season_breaks.config(state=state)
+            self._mark_preview_stale()
 
     def _build_team_season(self, p):
         pass  # replaced by _build_mode
@@ -176,41 +184,110 @@ class GameRecordTab(ttk.Frame):
         self._show_logo_var       = tk.BooleanVar(value=True)
         self._show_opp_logos_var  = tk.BooleanVar(value=False)
         self._show_scores_var     = tk.BooleanVar(value=True)
+        self._show_results_var    = tk.BooleanVar(value=True)
+        self._result_placement_var = tk.StringVar(value="column")
         self._show_time_var       = tk.BooleanVar(value=True)
+        self._time_placement_var  = tk.StringVar(value="column")
+        self._column_order_var    = tk.StringVar(value="date")
+        self._show_dow_var        = tk.BooleanVar(value=False)
         self._show_ha_col_var     = tk.BooleanVar(value=True)
         self._show_summary_var    = tk.BooleanVar(value=True)
         self._use_team_colors_var = tk.BooleanVar(value=False)
         self._show_ts_var         = tk.BooleanVar(value=False)
-        ttk.Checkbutton(lf, text="Show team logo",
-                        variable=self._show_logo_var).pack(anchor="w", padx=8, pady=1)
-        ttk.Checkbutton(lf, text="Show opponent logos",
-                        variable=self._show_opp_logos_var).pack(anchor="w", padx=8, pady=1)
-        ttk.Checkbutton(lf, text="Show scores",
-                        variable=self._show_scores_var).pack(anchor="w", padx=8, pady=1)
-        ttk.Checkbutton(lf, text="Show kickoff time",
-                        variable=self._show_time_var).pack(anchor="w", padx=8, pady=1)
-        ttk.Checkbutton(lf, text="Show H/A column (uncheck for @ prefix style)",
-                        variable=self._show_ha_col_var).pack(anchor="w", padx=8, pady=1)
-        ttk.Checkbutton(lf, text="Show W-L summary",
-                        variable=self._show_summary_var).pack(anchor="w", padx=8, pady=1)
-        ttk.Checkbutton(lf, text="Use team colors",
-                        variable=self._use_team_colors_var).pack(anchor="w", padx=8, pady=1)
-        ttk.Checkbutton(lf, text="Show timestamp",
-                        variable=self._show_ts_var).pack(anchor="w", padx=8, pady=(1, 4))
-        # Last-N-specific display options
-        self._year_in_date_lbl = ttk.Label(lf, text="Last N mode options:",
-                                            foreground="#555555")
-        self._year_in_date_lbl.pack(anchor="w", padx=8, pady=(4, 0))
+
+        score_frame = ttk.LabelFrame(lf, text="Scores and Results")
+        score_frame.pack(fill="x", padx=8, pady=(4, 2))
+        ttk.Checkbutton(score_frame, text="Show scores",
+                        variable=self._show_scores_var,
+                        command=self._on_result_visibility_change).pack(anchor="w", padx=6, pady=1)
+        ttk.Checkbutton(score_frame, text="Show W/L result",
+                        variable=self._show_results_var,
+                        command=self._on_result_visibility_change).pack(anchor="w", padx=6, pady=1)
+        ttk.Label(score_frame, text="Score/result placement:").pack(anchor="w", padx=6, pady=(3, 0))
+        self._result_placement_buttons = []
+        for label, value in (("Separate column", "column"), ("Inline with opponent", "opponent")):
+            button = ttk.Radiobutton(score_frame, text=label, value=value,
+                                     variable=self._result_placement_var,
+                                     command=self._mark_preview_stale)
+            button.pack(anchor="w", padx=14, pady=1)
+            self._result_placement_buttons.append(button)
+
+        detail_frame = ttk.LabelFrame(lf, text="Game Details")
+        detail_frame.pack(fill="x", padx=8, pady=2)
+        ttk.Checkbutton(detail_frame, text="Show kickoff time",
+                        variable=self._show_time_var,
+                        command=self._on_time_visibility_change).pack(anchor="w", padx=6, pady=1)
+        ttk.Label(detail_frame, text="Kickoff placement:").pack(anchor="w", padx=6, pady=(3, 0))
+        self._time_placement_buttons = []
+        for label, value in (("Separate column", "column"), ("Inline with date", "date")):
+            button = ttk.Radiobutton(detail_frame, text=label, value=value,
+                                     variable=self._time_placement_var,
+                                     command=self._mark_preview_stale)
+            button.pack(anchor="w", padx=14, pady=1)
+            self._time_placement_buttons.append(button)
+        ttk.Checkbutton(detail_frame, text="Show day of week",
+                        variable=self._show_dow_var,
+                        command=self._mark_preview_stale).pack(anchor="w", padx=6, pady=1)
+        ttk.Checkbutton(detail_frame, text="Show H/A column",
+                        variable=self._show_ha_col_var,
+                        command=self._mark_preview_stale).pack(anchor="w", padx=6, pady=(1, 4))
+
+        order_frame = ttk.LabelFrame(lf, text="Column Order")
+        order_frame.pack(fill="x", padx=8, pady=2)
+        for label, value in (("Date first", "date"), ("Opponent first", "opponent")):
+            ttk.Radiobutton(order_frame, text=label, value=value,
+                            variable=self._column_order_var,
+                            command=self._mark_preview_stale).pack(anchor="w", padx=6, pady=1)
+
+        appearance_frame = ttk.LabelFrame(lf, text="Appearance")
+        appearance_frame.pack(fill="x", padx=8, pady=2)
+        for text, variable in (
+            ("Show team logo", self._show_logo_var),
+            ("Show opponent logos", self._show_opp_logos_var),
+            ("Show record", self._show_summary_var),
+            ("Use team colors", self._use_team_colors_var),
+            ("Show timestamp", self._show_ts_var),
+        ):
+            ttk.Checkbutton(appearance_frame, text=text, variable=variable,
+                            command=self._mark_preview_stale).pack(anchor="w", padx=6, pady=1)
+
+        last_n_frame = ttk.LabelFrame(lf, text="Last N Display")
+        last_n_frame.pack(fill="x", padx=8, pady=(2, 4))
         self._show_year_in_date_var  = tk.BooleanVar(value=False)
         self._show_season_breaks_var = tk.BooleanVar(value=True)
         self._cb_year_in_date = ttk.Checkbutton(
-            lf, text="Show year in date (e.g. Sep 06 '25)",
-            variable=self._show_year_in_date_var)
-        self._cb_year_in_date.pack(anchor="w", padx=16, pady=1)
+            last_n_frame, text="Show year in date (e.g. Sep 06 '25)",
+            variable=self._show_year_in_date_var, command=self._mark_preview_stale)
+        self._cb_year_in_date.pack(anchor="w", padx=6, pady=1)
         self._cb_season_breaks = ttk.Checkbutton(
-            lf, text="Show season break rows",
-            variable=self._show_season_breaks_var)
-        self._cb_season_breaks.pack(anchor="w", padx=16, pady=(1, 4))
+            last_n_frame, text="Show season break rows",
+            variable=self._show_season_breaks_var, command=self._mark_preview_stale)
+        self._cb_season_breaks.pack(anchor="w", padx=6, pady=(1, 4))
+        self._update_placement_states()
+
+    def _on_result_visibility_change(self):
+        self._update_placement_states()
+        self._mark_preview_stale()
+
+    def _on_time_visibility_change(self):
+        self._update_placement_states()
+        self._mark_preview_stale()
+
+    def _update_placement_states(self):
+        result_state = "normal" if self._show_results_var.get() or self._show_scores_var.get() else "disabled"
+        time_state = "normal" if self._show_time_var.get() else "disabled"
+        for button in self._result_placement_buttons:
+            button.config(state=result_state)
+        for button in self._time_placement_buttons:
+            button.config(state=time_state)
+
+    def _mark_preview_stale(self):
+        if self._fetching or self._card_image is None:
+            return
+        self._status.config(
+            text="Preview out of date. Click Fetch & Preview to apply changes.",
+            foreground="#886600",
+        )
 
     def _build_bg_color(self, p):
         lf = ttk.LabelFrame(p, text="Background Color")
@@ -304,8 +381,8 @@ class GameRecordTab(ttk.Frame):
             if mode == "season":
                 season = self._int(self._season_var, 0)
                 st     = self._season_type_var.get()
-                block  = fetch_game_record(team, season, key, 999, "asc", "full_season", st) if bypass \
-                         else fetch_game_record_cached(team, season, key, 999, "asc", "full_season", st, ttl)
+                block  = fetch_game_record(team, season, key, 999, "asc", "season", st) if bypass \
+                         else fetch_game_record_cached(team, season, key, 999, "asc", "season", st, ttl)
             else:
                 n    = self._int(self._n_var, 10)
                 sort = self._sort_var.get()
@@ -384,11 +461,17 @@ class GameRecordTab(ttk.Frame):
             use_team_colors=self._use_team_colors_var.get(),
             show_week=(mode == "season"),
             show_scores=self._show_scores_var.get(),
+            show_results=self._show_results_var.get(),
+            result_placement=self._result_placement_var.get(),
             show_ha_col=self._show_ha_col_var.get(),
             show_time=self._show_time_var.get(),
+            time_placement=self._time_placement_var.get(),
+            column_order=self._column_order_var.get(),
+            show_day_of_week=self._show_dow_var.get(),
             show_opp_logos=self._show_opp_logos_var.get(),
             show_year_in_date=(mode == "last_n" and self._show_year_in_date_var.get()),
             show_season_breaks=(mode == "last_n" and self._show_season_breaks_var.get()),
+            summary_label="Last N Record" if mode == "last_n" else "Season Record",
             timezone=getattr(self.settings, "display_timezone", "ET"),
             team=team,
         )
@@ -414,7 +497,9 @@ class GameRecordTab(ttk.Frame):
         self._global_var.set(s.game_record_use_global_size)
         self._team_var.set(s.game_record_team)
         self._mode_var.set(getattr(s, "game_record_mode", "season"))
-        self._season_var.set(str(s.game_record_season))
+        saved_season = int(s.game_record_season)
+        latest_completed = datetime.datetime.now().year - 1
+        self._season_var.set(str(saved_season if saved_season == 0 or saved_season <= latest_completed else 0))
         self._season_type_var.set(getattr(s, "game_record_season_type", "both"))
         self._n_var.set(str(s.game_record_n))
         self._sort_var.set(s.game_record_date_sort)
@@ -423,8 +508,13 @@ class GameRecordTab(ttk.Frame):
         self._show_logo_var.set(s.game_record_show_logos)
         self._show_opp_logos_var.set(s.game_record_show_opp_logos)
         self._show_scores_var.set(getattr(s, "game_record_show_scores", True))
+        self._show_results_var.set(getattr(s, "game_record_show_results", True))
+        self._result_placement_var.set(getattr(s, "game_record_result_placement", "column"))
         self._show_ha_col_var.set(getattr(s, "game_record_show_ha_col", True))
         self._show_time_var.set(getattr(s, "game_record_show_time", True))
+        self._time_placement_var.set(getattr(s, "game_record_time_placement", "column"))
+        self._column_order_var.set(getattr(s, "game_record_column_order", "date"))
+        self._show_dow_var.set(getattr(s, "game_record_show_day_of_week", False))
         self._show_summary_var.set(s.game_record_show_summary)
         self._show_ts_var.set(s.game_record_show_timestamp)
         self._use_team_colors_var.set(s.game_record_use_team_colors)
@@ -434,7 +524,7 @@ class GameRecordTab(ttk.Frame):
         self._fname_var.set(s.game_record_export_filename)
         self._append_ts_var.set(s.game_record_append_timestamp)
         self._on_mode()
-        self._on_global(); self._on_size()
+        self._on_global(); self._on_size(); self._update_placement_states()
 
     def apply(self):
         s = self.settings
@@ -452,8 +542,13 @@ class GameRecordTab(ttk.Frame):
         s.game_record_show_logos       = self._show_logo_var.get()
         s.game_record_show_opp_logos   = self._show_opp_logos_var.get()
         s.game_record_show_scores      = self._show_scores_var.get()
+        s.game_record_show_results     = self._show_results_var.get()
+        s.game_record_result_placement = self._result_placement_var.get()
         s.game_record_show_ha_col      = self._show_ha_col_var.get()
         s.game_record_show_time        = self._show_time_var.get()
+        s.game_record_time_placement   = self._time_placement_var.get()
+        s.game_record_column_order     = self._column_order_var.get()
+        s.game_record_show_day_of_week = self._show_dow_var.get()
         s.game_record_show_summary     = self._show_summary_var.get()
         s.game_record_show_timestamp   = self._show_ts_var.get()
         s.game_record_use_team_colors  = self._use_team_colors_var.get()

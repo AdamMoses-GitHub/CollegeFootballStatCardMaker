@@ -1,3 +1,4 @@
 cfbd>=4.0
 Pillow>=10.0
 requests>=2.31
+tzdata>=2025.2

@@ -13,6 +13,7 @@ from app.utils.font_manager import get_font
 
 @dataclass
 class GameRecordCardConfig(CardConfig):
+    is_schedule: bool      = False
     show_logo: bool       = True
     show_summary: bool    = True
     show_timestamp: bool  = False
@@ -21,6 +22,7 @@ class GameRecordCardConfig(CardConfig):
     use_team_colors: bool = False
     show_week: bool       = False
     show_scores: bool     = True
+    show_results: bool    = True
     show_ha_col: bool     = True
     show_time: bool       = True
     show_opp_logos: bool  = False
@@ -29,6 +31,13 @@ class GameRecordCardConfig(CardConfig):
     show_byes: bool        = False
     show_year_in_date: bool = False
     show_season_breaks: bool = False
+    schedule_result_placement: str = "column"
+    schedule_time_placement: str = "column"
+    schedule_column_order: str = "schedule"
+    result_placement: str = "column"
+    time_placement: str = "column"
+    column_order: str = "date"
+    summary_label: str = "Season Record"
     timezone: str         = "ET"
 
     title_bg: str      = "#1a3a5c"
@@ -58,6 +67,10 @@ _COL_FRACS_NOHA       = {"DATE": 0.20, "OPP": 0.46, "RESULT": 0.12, "SCORE": 0.2
 _COL_FRACS_WK_NOHA    = {"WK": 0.06, "DATE": 0.15, "OPP": 0.37, "TIME": 0.14, "RESULT": 0.10, "SCORE": 0.18}
 _COL_FRACS_NOHA_NOSCR = {"DATE": 0.24, "OPP": 0.60, "RESULT": 0.16}
 _COL_FRACS_WK_NOHA_NOSCR={"WK":0.07,"DATE":0.18,"OPP":0.44,"TIME":0.15,"RESULT":0.16}
+_COL_FRACS_WK_INLINE_TIME        = {"WK": 0.06, "DATE": 0.30, "OPP": 0.40, "H/A": 0.08, "RESULT": 0.16}
+_COL_FRACS_WK_NOHA_INLINE_TIME   = {"WK": 0.06, "DATE": 0.32, "OPP": 0.46, "RESULT": 0.16}
+_COL_FRACS_WK_INLINE_TIME_NO_RES = {"WK": 0.06, "DATE": 0.32, "OPP": 0.53, "H/A": 0.09}
+_COL_FRACS_WK_NOHA_INLINE_TIME_NO_RES = {"WK": 0.06, "DATE": 0.34, "OPP": 0.60}
 _CELL_PAD   = 6
 _TITLE_PCT  = 0.10
 _HEADER_PCT = 0.065
@@ -65,8 +78,7 @@ _FOOTER_PCT = 0.07
 
 # ---------------------------------------------------------------------------
 # Timezone offset map  (standard_hours, daylight_hours)
-# DST heuristic: months 3–11 (Mar–Nov) use daylight offset
-# Used only when zoneinfo is unavailable (Python < 3.9).
+# Used only when zoneinfo/tzdata is unavailable.
 # ---------------------------------------------------------------------------
 _TZ_OFFSETS: dict[str, tuple[int, int]] = {
     "ET":  (-5, -4),
@@ -103,11 +115,36 @@ def _utc_to_local(utc_dt: "datetime.datetime", timezone: str) -> "datetime.datet
         utc_dt = utc_dt.replace(tzinfo=_dt.timezone.utc)
     if _HAS_ZONEINFO:
         iana = _TZ_IANA.get(timezone, "America/New_York")
-        return utc_dt.astimezone(_ZoneInfo(iana))
-    # Fallback: simple DST heuristic
+        try:
+            return utc_dt.astimezone(_ZoneInfo(iana))
+        except Exception:
+            pass
+    # Fallback: approximate US DST rules for schedule display only.
     std_off, dst_off = _TZ_OFFSETS.get(timezone, (-5, -4))
-    offset = dst_off if 3 <= utc_dt.month <= 11 else std_off
+    observes_dst = timezone not in ("HT", "UTC")
+    offset = dst_off if observes_dst and _is_us_dst_utc(utc_dt) else std_off
     return utc_dt + _dt.timedelta(hours=offset)
+
+
+def _nth_weekday(year: int, month: int, weekday: int, nth: int) -> datetime.date:
+    """Return the nth weekday in a given month; Monday is 0."""
+    import datetime as _dt
+    first = _dt.date(year, month, 1)
+    days_until_weekday = (weekday - first.weekday()) % 7
+    return first + _dt.timedelta(days=days_until_weekday + 7 * (nth - 1))
+
+
+def _is_us_dst_utc(utc_dt: "datetime.datetime") -> bool:
+    """Approximate US daylight-saving period in UTC for fallback conversion."""
+    import datetime as _dt
+    year = utc_dt.year
+    dst_start = _dt.datetime.combine(
+        _nth_weekday(year, 3, 6, 2), _dt.time(7, 0), tzinfo=_dt.timezone.utc
+    )
+    dst_end = _dt.datetime.combine(
+        _nth_weekday(year, 11, 6, 1), _dt.time(6, 0), tzinfo=_dt.timezone.utc
+    )
+    return dst_start <= utc_dt < dst_end
 
 
 # ---------------------------------------------------------------------------
@@ -116,21 +153,44 @@ def _utc_to_local(utc_dt: "datetime.datetime", timezone: str) -> "datetime.datet
 
 def _format_game_time(game, timezone: str = "ET") -> str:
     """Return a formatted kickoff time string in the given timezone, or 'TBD'."""
-    if game.time_tbd or game.start_time_utc is None:
+    if game.start_time_utc is None:
+        return "TBD"
+    if game.time_tbd:
         return "TBD"
     try:
         local = _utc_to_local(game.start_time_utc, timezone)
         h = local.hour
         m = local.minute
-        # Sentinel guard: cfbd uses midnight-ish placeholders even when time
-        # is TBD. After timezone conversion games should never start before 9 AM.
-        if h < 9:
-            return "TBD"
         ampm = "PM" if h >= 12 else "AM"
         h12 = h % 12 or 12
         return f"{h12}:{m:02d} {ampm} {timezone}"
     except Exception:
         return "TBD"
+
+
+def _display_game_date(game, timezone: str) -> datetime.datetime:
+    """Return a game date in the selected timezone when kickoff is confirmed."""
+    if game.start_time_utc is not None and not game.time_tbd:
+        return _utc_to_local(game.start_time_utc, timezone).replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+        )
+    return game.date
+
+
+def _truncate_to_width(draw, text: str, font, max_width: int) -> str:
+    """Shorten text with an ellipsis so it fits within a table cell."""
+    if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+        return text
+    ellipsis = "..."
+    if draw.textbbox((0, 0), ellipsis, font=font)[2] > max_width:
+        return ""
+    shortened = text
+    while shortened:
+        shortened = shortened[:-1].rstrip()
+        candidate = f"{shortened}{ellipsis}"
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+            return candidate
+    return ellipsis
 
 
 class GameRecordCardRenderer:
@@ -149,9 +209,10 @@ class GameRecordCardRenderer:
         # Filter out bye weeks if the toggle is off
         games = [g for g in block.games if not g.is_bye] if not config.show_byes else block.games
 
-        title_h  = round(H * _TITLE_PCT)
+        title_summary = config.show_summary
+        title_h  = round(H * (_TITLE_PCT + 0.02 if title_summary else _TITLE_PCT))
         header_h = round(H * _HEADER_PCT)
-        has_footer = config.show_summary or config.show_timestamp
+        has_footer = config.show_timestamp
         footer_h = round(H * _FOOTER_PCT) if has_footer else 0
 
         data_h  = H - title_h - header_h - footer_h
@@ -163,7 +224,7 @@ class GameRecordCardRenderer:
             n_rows += breaks
         row_h   = max(16, data_h // n_rows)
 
-        col_widths = self._col_widths(W, cols)
+        col_widths = self._col_widths(W, cols, config)
 
         img  = config.new_canvas()
         draw = ImageDraw.Draw(img)
@@ -199,22 +260,86 @@ class GameRecordCardRenderer:
             base = _COLS_WK_NOHA if not config.show_ha_col else _COLS_WITH_WK
         else:
             base = _COLS_BASE_NOHA if not config.show_ha_col else _COLS_BASE
+            if not config.is_schedule and config.show_time:
+                base = list(base)
+                base.insert(base.index("DATE") + 1, "TIME")
         if not config.show_scores:
             base = [c for c in base if c != "SCORE"]
         if not config.show_time:
             base = [c for c in base if c != "TIME"]
+        elif config.is_schedule and config.schedule_time_placement == "date":
+            base = [c for c in base if c != "TIME"]
+        elif not config.is_schedule and config.time_placement == "date":
+            base = [c for c in base if c != "TIME"]
         if config.combine_result_score:
             base = [c for c in base if c != "RESULT"]
+        elif config.is_schedule:
+            if config.schedule_result_placement == "opponent":
+                base = [c for c in base if c not in ("RESULT", "SCORE")]
+            else:
+                base = [c for c in base if c != "SCORE"]
+            if not config.show_results and not config.show_scores:
+                base = [c for c in base if c != "RESULT"]
+            if config.schedule_column_order == "opponent":
+                order = ("WK", "OPP", "H/A", "DATE", "TIME", "RESULT")
+            else:
+                order = ("WK", "DATE", "TIME", "OPP", "H/A", "RESULT")
+            base = [column for column in order if column in base]
+        else:
+            if config.result_placement == "opponent":
+                base = [c for c in base if c not in ("RESULT", "SCORE")]
+            else:
+                base = [c for c in base if c != "SCORE"]
+            if not config.show_results and not config.show_scores:
+                base = [c for c in base if c != "RESULT"]
+            if config.column_order == "opponent":
+                order = ("WK", "OPP", "H/A", "DATE", "TIME", "RESULT", "SCORE")
+            else:
+                order = ("WK", "DATE", "TIME", "OPP", "H/A", "RESULT", "SCORE")
+            base = [column for column in order if column in base]
         return base
 
-    def _col_widths(self, total_w: int, cols: list[str]) -> list[int]:
+    def _col_widths(self, total_w: int, cols: list[str], config: GameRecordCardConfig | None = None) -> list[int]:
         use_wk   = "WK" in cols
         use_scr  = "SCORE" in cols
         use_ha   = "H/A" in cols
-        if use_wk and use_scr and use_ha:     fracs = _COL_FRACS_WK
+        use_time = "TIME" in cols
+        use_result = "RESULT" in cols
+        if config and not config.is_schedule:
+            weights = {
+                "WK": 0.06,
+                "DATE": 0.30 if config.show_year_in_date else 0.18,
+                "TIME": 0.14,
+                "OPP": 0.34,
+                "H/A": 0.08,
+                "RESULT": 0.10,
+                "SCORE": 0.18,
+            }
+            if config.time_placement == "date" and "TIME" not in cols:
+                weights["DATE"] += 0.14
+            total_weight = sum(weights[column] for column in cols)
+            widths = [round(total_w * weights[column] / total_weight) for column in cols]
+            widths[-1] += total_w - sum(widths)
+            return widths
+        inline_time = bool(
+            config
+            and config.is_schedule
+            and config.show_time
+            and config.schedule_time_placement == "date"
+            and not use_time
+        )
+        if inline_time and not use_result and use_ha:
+            fracs = _COL_FRACS_WK_INLINE_TIME_NO_RES
+        elif inline_time and not use_result:
+            fracs = _COL_FRACS_WK_NOHA_INLINE_TIME_NO_RES
+        elif inline_time and use_ha:
+            fracs = _COL_FRACS_WK_INLINE_TIME
+        elif inline_time:
+            fracs = _COL_FRACS_WK_NOHA_INLINE_TIME
+        elif use_wk and use_scr and use_ha:   fracs = _COL_FRACS_WK
         elif use_wk and use_scr:              fracs = _COL_FRACS_WK_NOHA
-        elif use_wk and use_ha:              fracs = _COL_FRACS_WK_NO_SCR
-        elif use_wk:                         fracs = _COL_FRACS_WK_NOHA_NOSCR
+        elif use_wk and use_ha:               fracs = _COL_FRACS_WK_NO_SCR
+        elif use_wk:                          fracs = _COL_FRACS_WK_NOHA_NOSCR
         elif use_scr and use_ha:             fracs = _COL_FRACS_BASE
         elif use_scr:                        fracs = _COL_FRACS_NOHA
         elif use_ha:                         fracs = _COL_FRACS_NO_SCR
@@ -246,7 +371,8 @@ class GameRecordCardRenderer:
     def _draw_title(self, draw, img, block, config, W, title_h, working_dir):
         draw.rectangle([0, 0, W - 1, title_h - 1], fill=config.title_bg)
 
-        logo_sz   = round(title_h * 0.75)
+        title_summary = config.show_summary
+        logo_sz   = round(title_h * (0.65 if title_summary else 0.75))
         inner_gap = round(title_h * 0.10)
         logo      = None
         if config.show_logo:
@@ -254,18 +380,23 @@ class GameRecordCardRenderer:
             logo = get_logo(slugify(block.team), logo_sz, working_dir)
 
         title_text = f"{block.season} {block.team}"
-        sub_text   = "Season Schedule" if config.show_week else "Game Results"
-        tf  = get_font(max(11, round(title_h * 0.36)), bold=True)
-        sf  = get_font(max(8,  round(title_h * 0.22)), italic=True)
+        sub_text   = "Season Schedule" if config.is_schedule else "Game Results"
+        summary_text = f"{config.summary_label}: {block.total_wins}–{block.total_losses}" if title_summary else ""
+        tf  = get_font(max(11, round(title_h * (0.30 if title_summary else 0.36))), bold=True)
+        sf  = get_font(max(8,  round(title_h * (0.18 if title_summary else 0.22))), italic=True)
+        rf  = get_font(max(8, round(title_h * 0.16))) if title_summary else None
         tb  = draw.textbbox((0, 0), title_text, font=tf)
         sb  = draw.textbbox((0, 0), sub_text,   font=sf)
-        text_w = max(tb[2]-tb[0], sb[2]-sb[0])
+        rb  = draw.textbbox((0, 0), summary_text, font=rf) if rf else (0, 0, 0, 0)
+        text_w = max(tb[2]-tb[0], sb[2]-sb[0], rb[2]-rb[0])
         gap    = round(title_h * 0.05)
 
         block_w = (logo_sz + inner_gap + text_w) if logo else text_w
         start_x = (W - block_w) // 2
 
         tot = (tb[3]-tb[1]) + gap + (sb[3]-sb[1])
+        if rf:
+            tot += gap + (rb[3]-rb[1])
         ty  = (title_h - tot) // 2
 
         if logo:
@@ -279,13 +410,17 @@ class GameRecordCardRenderer:
                   title_text, font=tf, fill=config.title_fg)
         draw.text((text_start_x + (text_w - (sb[2]-sb[0])) // 2, ty + (tb[3]-tb[1]) + gap),
                   sub_text, font=sf, fill=config.title_fg)
+        if rf:
+            summary_y = ty + (tb[3]-tb[1]) + gap + (sb[3]-sb[1]) + gap
+            draw.text((text_start_x + (text_w - (rb[2]-rb[0])) // 2, summary_y),
+                      summary_text, font=rf, fill=config.title_fg)
 
     def _draw_header(self, draw, cols, col_widths, config, y, header_h, W):
         draw.rectangle([0, y, W - 1, y + header_h - 1], fill=config.header_bg)
         font = get_font(max(7, round(header_h * 0.48)), bold=True, condensed=True)
         xs   = self._col_xs(col_widths)
         labels = {"WK": "WK", "DATE": "DATE", "OPP": "OPPONENT", "H/A": "H/A",
-                  "RESULT": "W/L",
+                  "RESULT": "RESULT" if config.is_schedule else "W/L",
                   "SCORE": "RESULT" if config.combine_result_score else "SCORE"}
         for i, col in enumerate(cols):
             col_x = xs[i]
@@ -304,6 +439,8 @@ class GameRecordCardRenderer:
     def _row_bg(self, game: GameResult, config: GameRecordCardConfig, idx: int) -> str:
         if game.is_bye:
             return "#E8E8E8"
+        if not config.show_results:
+            return config.row_color if idx % 2 == 0 else config.row_alt_color
         if game.result == "W":
             return config.win_bg
         if game.result == "L":
@@ -314,6 +451,8 @@ class GameRecordCardRenderer:
 
     def _draw_row(self, draw, img, game: GameResult, cols, col_widths, config, y, row_h, working_dir):
         font_sz = max(7, round(row_h * 0.48))
+        if config.is_schedule and row_h > 250:
+            font_sz = min(font_sz, 48)
         font    = get_font(font_sz)
         font_b  = get_font(font_sz, bold=True)
         xs      = self._col_xs(col_widths)
@@ -346,21 +485,53 @@ class GameRecordCardRenderer:
                 opp_display = game.opponent
         else:
             opp_display = game.opponent
+        result_placement = config.schedule_result_placement if config.is_schedule else config.result_placement
+        if result_placement == "opponent":
+            inline_parts = []
+            if config.show_results and game.result:
+                inline_parts.append(game.result)
+            if config.show_scores and game.team_score is not None:
+                inline_parts.append(f"{game.team_score}–{game.opp_score}")
+            if inline_parts:
+                opp_display = f"{opp_display} ({', '.join(inline_parts)})"
+        result_parts = []
+        if config.show_results:
+            result_parts.append(game.result or ("TBD" if is_upcoming else "—"))
+        if config.show_scores and game.team_score is not None:
+            result_parts.append(f"{game.team_score}–{game.opp_score}")
+        result_display = ", ".join(result_parts)
         result_prefix = {"W": "(W) ", "L": "(L) ", "T": "(T) "}
+        display_date = _display_game_date(game, config.timezone) if game.date else None
+        date_display = (
+            (display_date.strftime("%a %b %d '%y") if config.show_day_of_week
+             else display_date.strftime("%b %d '%y"))
+            if display_date and config.show_year_in_date
+            else
+            (display_date.strftime("%a %b %d") if config.show_day_of_week
+             else display_date.strftime("%b %d")) if display_date else f"Wk {game.week}"
+        )
+        time_display = _format_game_time(game, config.timezone)
+        if (
+            config.is_schedule
+            and config.show_time
+            and config.schedule_time_placement in ("date", "both")
+            and time_display != "TBD"
+        ):
+            date_display = f"{date_display} ({time_display})"
+        elif (
+            not config.is_schedule
+            and config.show_time
+            and config.time_placement == "date"
+            and time_display != "TBD"
+        ):
+            date_display = f"{date_display} ({time_display})"
         values = {
             "WK":     str(game.week) if game.week else "",
-            "DATE":   (
-                (game.date.strftime("%a %b %d '%y") if config.show_day_of_week
-                 else game.date.strftime("%b %d '%y"))
-                if game.date and config.show_year_in_date
-                else
-                (game.date.strftime("%a %b %d") if config.show_day_of_week
-                 else game.date.strftime("%b %d")) if game.date else f"Wk {game.week}"
-            ),
+            "DATE":   date_display,
             "OPP":    opp_display,
             "H/A":    "N" if game.is_neutral else ("H" if game.is_home else "A"),
-            "TIME":   _format_game_time(game, config.timezone),
-            "RESULT": game.result if game.result else ("TBD" if is_upcoming else "—"),
+            "TIME":   time_display,
+            "RESULT": result_display,
             "SCORE":  (
                 (result_prefix.get(game.result, "") + f"{game.team_score}–{game.opp_score}")
                 if game.team_score is not None and config.combine_result_score
@@ -374,15 +545,17 @@ class GameRecordCardRenderer:
         for i, col in enumerate(cols):
             col_x = xs[i]
             col_w = col_widths[i]
-            val   = values.get(col, "")
+            val   = str(values.get(col, ""))
             use_font = font_b if col == "OPP" else font
+            if col != "OPP":
+                val = _truncate_to_width(draw, val, use_font, col_w - 2 * _CELL_PAD)
             bb    = draw.textbbox((0, 0), val, font=use_font)
             tw, th = bb[2] - bb[0], bb[3] - bb[1]
             ty    = y + (row_h - th) // 2
 
             color = config.text_color
             if col == "RESULT":
-                color = result_colors.get(val, config.text_color)
+                color = result_colors.get(game.result, config.text_color)
             if col == "SCORE" and config.combine_result_score:
                 color = result_colors.get(game.result, config.text_color)
 
@@ -397,6 +570,7 @@ class GameRecordCardRenderer:
                         ly = y + (row_h - logo_sz) // 2
                         img.paste(logo, (tx, ly), logo)
                         tx += logo_sz + _CELL_PAD
+                val = _truncate_to_width(draw, val, use_font, col_x + col_w - tx - _CELL_PAD)
                 draw.text((tx, ty), val, font=use_font, fill=color)
             else:
                 tx = col_x + (col_w - tw) // 2
@@ -408,9 +582,6 @@ class GameRecordCardRenderer:
     def _draw_footer(self, draw, block, config, fy, footer_h, W):
         font  = get_font(max(8, round(footer_h * 0.32)), italic=True)
         lines = []
-
-        if config.show_summary:
-            lines.append(f"Season Record: {block.total_wins}–{block.total_losses}")
 
         if config.show_timestamp:
             lines.append(block.as_of.strftime("Data as of: %b %d, %Y  %I:%M %p"))

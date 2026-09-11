@@ -27,7 +27,7 @@ _ESPN_SCHEDULE_URL = (
     "?season={season}&seasontype={stype}"
 )
 
-# In-memory cache: (espn_id, season) → (fetched_at, {date_key: (utc_dt, time_valid)})
+# In-memory cache: (espn_id, season) -> (fetched_at, {date_key: (utc_dt, time_valid, team_slugs)})
 _mem: dict[tuple, tuple[datetime.datetime, dict]] = {}
 _TTL_SECONDS = 4 * 3600  # refresh at most once every 4 hours
 
@@ -48,12 +48,15 @@ def _load_disk_cache(espn_id: int, season: int, working_dir: str) -> Optional[di
         age = (datetime.datetime.now() - fetched_at).total_seconds()
         if age > _TTL_SECONDS:
             return None
-        # Deserialise
-        result: dict[str, tuple[Optional[datetime.datetime], bool]] = {}
+        # Deserialise. Older cache files lack opponent metadata and are unsafe
+        # for date-only fallback matching until the cache is refreshed.
+        result: dict[str, tuple[Optional[datetime.datetime], bool, set[str]]] = {}
         for date_key, entry in raw["data"].items():
-            dt_str, tv = entry
+            dt_str, tv, *team_slugs = entry
             dt = datetime.datetime.fromisoformat(dt_str) if dt_str else None
-            result[date_key] = (dt, bool(tv))
+            result[date_key] = (
+                dt, bool(tv), set(team_slugs[0]) if team_slugs else {"__legacy_cache__"}
+            )
         return result
     except Exception:
         return None
@@ -70,7 +73,7 @@ def _save_disk_cache(
     serialisable = {
         "fetched_at": datetime.datetime.now().isoformat(),
         "data": {
-            k: (v[0].isoformat() if v[0] else None, v[1])
+            k: (v[0].isoformat() if v[0] else None, v[1], sorted(v[2]))
             for k, v in data.items()
         },
     }
@@ -82,14 +85,11 @@ def _save_disk_cache(
 
 
 def _date_key(utc_dt: datetime.datetime) -> str:
-    """Normalise a UTC datetime to a US-local date key.
-
-    CFB games fall between roughly noon and midnight ET (16:00–05:00 UTC).
-    Subtracting 12 h from the UTC time always lands on the same calendar day
-    as the US game date, regardless of DST.
-    """
-    shifted = utc_dt - datetime.timedelta(hours=12)
-    return shifted.strftime("%Y-%m-%d")
+    """Return the ESPN event's US Eastern calendar date."""
+    from zoneinfo import ZoneInfo
+    if utc_dt.tzinfo is None:
+        utc_dt = utc_dt.replace(tzinfo=datetime.timezone.utc)
+    return utc_dt.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
 
 def _fetch_season_type(espn_id: int, season: int, stype: int) -> list[dict]:
@@ -108,8 +108,8 @@ def fetch_espn_schedule(
     espn_id: int,
     season: int,
     working_dir: str,
-) -> dict[str, tuple[Optional[datetime.datetime], bool]]:
-    """Return a dict mapping US-date-key → (utc_datetime | None, time_valid).
+) -> dict[str, tuple[Optional[datetime.datetime], bool, set[str]]]:
+    """Return a dict mapping US-date-key -> (utc_datetime | None, time_valid, team_slugs).
 
     Fetches both regular season (seasontype=2) and postseason (seasontype=3).
     Results are cached on disk (4 h TTL) and in memory for the process lifetime.
@@ -129,6 +129,7 @@ def fetch_espn_schedule(
 
     # Fetch from ESPN
     data = {}
+    from app.data.logo_cache import slugify
     for stype in (2, 3):
         for event in _fetch_season_type(espn_id, season, stype):
             comps = event.get("competitions", [])
@@ -144,9 +145,16 @@ def fetch_espn_schedule(
                 if utc_dt.tzinfo is None:
                     utc_dt = utc_dt.replace(tzinfo=datetime.timezone.utc)
                 key = _date_key(utc_dt)
+                team_slugs = set()
+                for competitor in comp.get("competitors", []):
+                    team = competitor.get("team", {})
+                    for field in ("displayName", "shortDisplayName", "name", "location"):
+                        value = team.get(field)
+                        if value:
+                            team_slugs.add(slugify(value))
                 # Prefer time_valid=True entries; don't overwrite a valid entry
                 if key not in data or time_valid:
-                    data[key] = (utc_dt, time_valid)
+                    data[key] = (utc_dt, time_valid, team_slugs)
             except Exception:
                 continue
 
