@@ -5,6 +5,8 @@ import datetime
 import logging
 from dataclasses import dataclass, field
 
+from app.data import api_error
+
 logger = logging.getLogger(__name__)
 
 POSITION_GROUPS: dict[str, list[str]] = {
@@ -95,8 +97,7 @@ def fetch_roster(team: str, season: int, api_key: str) -> RosterBlock:
         try:
             raw = teams_api.get_roster(team=team, year=attempt_season) or []
         except Exception as exc:
-            logger.exception("cfbd API error fetching roster")
-            raise RuntimeError(f"API error: {exc}") from exc
+            raise api_error(exc, "cfbd API error fetching roster")
         if raw:
             used_season = attempt_season
             break

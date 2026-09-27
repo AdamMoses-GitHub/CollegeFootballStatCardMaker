@@ -1,4 +1,5 @@
 cfbd>=4.0
+pydantic<2
 Pillow>=10.0
 requests>=2.31
 tzdata>=2025.2

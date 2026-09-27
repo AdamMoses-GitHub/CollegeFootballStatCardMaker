@@ -14,6 +14,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.data import api_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -145,8 +147,7 @@ def fetch_playoffs(season: int, api_key: str) -> PlayoffBracket:
             season_type=cfbd.SeasonType.POSTSEASON,
         )
     except Exception as exc:
-        logger.exception("cfbd API error fetching postseason games")
-        raise RuntimeError(f"API error: {exc}") from exc
+        raise api_error(exc, "cfbd API error fetching postseason games")
 
     if not games:
         raise RuntimeError(

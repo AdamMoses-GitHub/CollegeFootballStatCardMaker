@@ -5,6 +5,8 @@ import datetime
 import logging
 from dataclasses import dataclass, field
 
+from app.data import api_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -121,7 +123,7 @@ def search_players(query: str, api_key: str) -> list[PlayerSearchResult]:
     try:
         results = players_api.search_players(search_term=query) or []
     except Exception as exc:
-        raise RuntimeError(f"API error: {exc}") from exc
+        raise api_error(exc, "cfbd API error searching players")
 
     return [
         PlayerSearchResult(

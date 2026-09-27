@@ -5,6 +5,8 @@ import datetime
 import logging
 from dataclasses import dataclass, field
 
+from app.data import api_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -110,8 +112,7 @@ def fetch_game_record(
         games = games_api.get_games(year=effective_season, team=team,
                                      season_type=st_arg)
     except Exception as exc:
-        logger.exception("cfbd API error fetching game record")
-        raise RuntimeError(f"API error: {exc}") from exc
+        raise api_error(exc, "cfbd API error fetching game record")
 
     if not games:
         raise RuntimeError(f"No game data found for {team} in {effective_season} "
@@ -337,6 +338,8 @@ def fetch_last_n_across_seasons(
         try:
             raw = games_api.get_games(year=check_season, team=team, season_type=st_arg) or []
         except Exception as exc:
+            if getattr(exc, "status", None) == 429:
+                raise api_error(exc, "cfbd API error fetching game history")
             logger.warning("API error fetching season %d for %s: %s", check_season, team, exc)
             break
 

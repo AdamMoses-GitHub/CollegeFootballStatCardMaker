@@ -10,6 +10,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.data import api_error
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -106,8 +108,7 @@ def fetch_standings(
             conference=conf_abbrev,
         )
     except Exception as exc:
-        logger.exception("cfbd API error fetching standings")
-        raise RuntimeError(f"API error: {exc}") from exc
+        raise api_error(exc, "cfbd API error fetching standings")
 
     entries: list[StandingsEntry] = []
     for rec in (records or []):

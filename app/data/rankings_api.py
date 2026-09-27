@@ -5,6 +5,8 @@ import datetime
 import logging
 from dataclasses import dataclass, field
 
+from app.data import api_error
+
 logger = logging.getLogger(__name__)
 
 POLL_OPTIONS = [
@@ -88,8 +90,7 @@ def fetch_rankings(
             week=week_arg,
         )
     except Exception as exc:
-        logger.exception("cfbd API error fetching rankings")
-        raise RuntimeError(f"API error: {exc}") from exc
+        raise api_error(exc, "cfbd API error fetching rankings")
 
     if not results:
         raise RuntimeError(f"No rankings data returned for {effective_season}.")

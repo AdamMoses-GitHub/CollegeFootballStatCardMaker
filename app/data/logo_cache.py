@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import time
 import unicodedata
 from typing import Optional
 
@@ -50,7 +51,7 @@ TEAM_ESPN_ID_MAP: dict[str, int] = {
     "northwestern":     77,
     "ohio_state":       194,
     "penn_state":       213,
-    "purdue":           2755,
+    "purdue":           2509,
     "rutgers":          164,
     "wisconsin":        275,
     "ucla":             26,
@@ -119,7 +120,7 @@ TEAM_ESPN_ID_MAP: dict[str, int] = {
     "florida_atlantic": 2226,
     "north_texas":      249,
     "rice":             242,
-    "utsa":             2573,
+    "utsa":             2636,
     "wku":              98,
     # Sun Belt
     "appalachian_state": 2026,
@@ -157,7 +158,6 @@ TEAM_ESPN_ID_MAP: dict[str, int] = {
     "middle_tennessee": 2393,
     "new_mexico_state": 166,
     "sam_houston":      2534,
-    "ut_arlington":     2568,
     "utep":             2638,
     # Independents
     "connecticut":      41,
@@ -172,7 +172,7 @@ TEAM_ESPN_ID_MAP: dict[str, int] = {
     "texas_andm":       245,    # slugify("Texas A&M") variant
     "texas_aandm":      245,    # slugify("Texas A&M") actual output
     # Big Ten
-    "oregon_state":     258,
+    "oregon_state":     204,
     "washington_state": 265,
     # ACC
     "california":       25,     # cfbd returns "California" (Cal)
@@ -189,13 +189,16 @@ TEAM_ESPN_ID_MAP: dict[str, int] = {
     "western_kentucky": 98,
     # Conference USA
     "florida_international": 2229,  # cfbd returns "Florida International"
-    "uab":              5765,
+    "uab":              5,
     # FCS schools that occasionally appear
     "north_dakota_state": 2449,
-    "delaware":         56,
+    "delaware":         48,
     "jacksonville_state": 55,
-    "sacramento_state": 2377,
+    "sacramento_state": 16,
     "missouri_state":   2623,
+    # Names ESPN spells differently
+    "southeastern_louisiana": 2545,
+    "albany":           399,
 }
 
 _CONF_LOGO_URL: dict[str, str] = {
@@ -227,66 +230,63 @@ def set_api_key(key: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Dynamic ESPN ID cache (JSON on disk)
+# Dynamic ESPN ID lookup — ESPN's public team list (all divisions, no key)
 # ---------------------------------------------------------------------------
 
-def _id_cache_path(working_dir: str) -> str:
-    return os.path.join(working_dir, "logos", "espn_id_cache.json")
+_ESPN_TEAMS_URL = (
+    "https://site.api.espn.com/apis/site/v2/sports/football/college-football/teams?limit=1000"
+)
+_ESPN_INDEX_MAX_AGE_S = 30 * 24 * 3600
+
+_espn_index: Optional[dict[str, int]] = None
 
 
-def _load_id_cache(working_dir: str) -> dict[str, int]:
-    path = _id_cache_path(working_dir)
-    if not os.path.exists(path):
-        return {}
+def _espn_index_path(working_dir: str) -> str:
+    return os.path.join(working_dir, "logos", "espn_team_index.json")
+
+
+def _fetch_espn_index() -> dict[str, int]:
+    resp = requests.get(_ESPN_TEAMS_URL, timeout=15)
+    resp.raise_for_status()
+    teams = [t["team"] for t in resp.json()["sports"][0]["leagues"][0]["teams"]]
+    index: dict[str, int] = {}
+    # Weaker keys first so school names (location) win on collisions.
+    for fields in (("abbreviation", "shortDisplayName", "nickname"), ("displayName", "location")):
+        for team in teams:
+            for f in fields:
+                if team.get(f):
+                    index[slugify(team[f])] = int(team["id"])
+    return index
+
+
+def _get_espn_index(working_dir: str) -> dict[str, int]:
+    global _espn_index
+    if _espn_index is not None:
+        return _espn_index
+
+    path = _espn_index_path(working_dir)
+    if os.path.exists(path) and time.time() - os.path.getmtime(path) < _ESPN_INDEX_MAX_AGE_S:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                _espn_index = {k: int(v) for k, v in json.load(fh).items()}
+            return _espn_index
+        except Exception:
+            logger.debug("Could not read ESPN team index at %s", path)
+
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return {k: int(v) for k, v in data.items()}
-    except Exception:
-        return {}
-
-
-def _save_id_cache(working_dir: str, cache: dict[str, int]) -> None:
-    path = _id_cache_path(working_dir)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    try:
+        _espn_index = _fetch_espn_index()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
-            json.dump(cache, fh, indent=2, sort_keys=True)
+            json.dump(_espn_index, fh, indent=1, sort_keys=True)
     except Exception:
-        logger.debug("Could not write ESPN ID cache to %s", path)
+        logger.warning("Could not fetch ESPN team list for logo lookup")
+        _espn_index = {}
+    return _espn_index
 
 
 def _lookup_espn_id_dynamic(original_name: str, slug: str, working_dir: str) -> Optional[int]:
-    """Query cfbd for a team's ESPN ID and persist the result to the JSON cache.
-
-    Returns the ESPN ID on success, None otherwise.
-    """
-    if not _cfbd_api_key:
-        return None
-
-    id_cache = _load_id_cache(working_dir)
-    if slug in id_cache:
-        return id_cache[slug]
-
-    try:
-        import cfbd
-        configuration = cfbd.Configuration()
-        configuration.access_token = _cfbd_api_key
-        client = cfbd.ApiClient(configuration)
-        teams_api = cfbd.TeamsApi(client)
-        results = teams_api.get_teams(search=original_name) or []
-        for team in results:
-            raw_id = getattr(team, "espn_id", None)
-            if raw_id is not None:
-                espn_id = int(raw_id)
-                id_cache[slug] = espn_id
-                _save_id_cache(working_dir, id_cache)
-                logger.info("Dynamically resolved ESPN ID %d for %r", espn_id, original_name)
-                return espn_id
-    except Exception:
-        logger.debug("Dynamic ESPN ID lookup failed for %r", original_name)
-
-    return None
+    """Resolve a team's ESPN ID from ESPN's full team list (covers FCS and below)."""
+    return _get_espn_index(working_dir).get(slug)
 
 
 def get_espn_id(team_name: str, working_dir: str) -> Optional[int]:
