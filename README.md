@@ -22,8 +22,8 @@ Manually assembling college football stat graphics means bouncing between ESPN, 
 
 ### The Main Features
 
-- **Conference Standings** — standings table for any FBS conference with W/L, PCT, conference record, and current streak
-- **AP / Coaches / CFP Rankings** — poll rankings card for any week with rank badges and first-place vote counts
+- **Conference Standings** — standings table for any FBS conference with W/L, PCT, conference record, current streak, and optional team-color row highlights
+- **AP / Coaches / CFP Rankings** — poll rankings card for any week with rank badges, first-place vote counts, and optional team-color row highlights
 - **CFP Playoff Bracket** — full bracket card with seeds, scores, and winner highlighting; supports both 12-team and legacy formats
 - **Team Season Record** — game-by-game results card for any team/season with W/L color coding and kickoff times
 - **Team Schedule** — upcoming full-season schedule with dates, opponents, home/away, and kickoff times

@@ -12,7 +12,7 @@ from typing import Optional
 from PIL import Image, ImageTk
 
 from app.settings import Settings
-from app.data.rankings_api import POLL_OPTIONS
+from app.data.rankings_api import POLL_OPTIONS, RankingsBlock
 
 THUMB_W = 480
 THUMB_H = 320
@@ -27,6 +27,7 @@ class RankingsTab(ttk.Frame):
         self._card_image: Optional[Image.Image] = None
         self._thumb_photo: Optional[ImageTk.PhotoImage] = None
         self._fetching: bool = False
+        self._current_block: Optional[RankingsBlock] = None
         self._build_ui()
         self._load_from_settings()
 
@@ -56,6 +57,7 @@ class RankingsTab(ttk.Frame):
         self._build_card_size(parent)
         self._build_season(parent)
         self._build_poll_options(parent)
+        self._build_highlight_teams(parent)
         self._build_display_options(parent)
         self._build_bg_color(parent)
         self._build_fetch_bar(parent)
@@ -169,6 +171,43 @@ class RankingsTab(ttk.Frame):
         ttk.Radiobutton(row, text="Postseason", variable=self._season_type_var,
                         value="postseason").pack(side="left", padx=(6, 0))
 
+    def _build_highlight_teams(self, parent: ttk.Frame) -> None:
+        lf = ttk.LabelFrame(parent, text="Highlight Teams")
+        lf.pack(fill="x", padx=8, pady=4)
+        ttk.Label(
+            lf, text="Ctrl/Shift-click to select teams in this poll. Leave empty for none.",
+            wraplength=250, justify="left",
+        ).pack(anchor="w", padx=6, pady=(5, 2))
+
+        list_frame = ttk.Frame(lf)
+        list_frame.pack(fill="x", padx=6)
+        self._highlight_listbox = tk.Listbox(
+            list_frame, height=7, selectmode=tk.EXTENDED, exportselection=False,
+        )
+        scrollbar = ttk.Scrollbar(
+            list_frame, orient="vertical", command=self._highlight_listbox.yview,
+        )
+        self._highlight_listbox.configure(yscrollcommand=scrollbar.set)
+        self._highlight_listbox.pack(side="left", fill="x", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self._highlight_status = ttk.Label(
+            lf, text="Fetch rankings to load teams.", foreground="#555555",
+        )
+        self._highlight_status.pack(anchor="w", padx=6, pady=(2, 4))
+
+        buttons = ttk.Frame(lf)
+        buttons.pack(fill="x", padx=6, pady=(0, 6))
+        self._clear_highlight_btn = ttk.Button(
+            buttons, text="Clear", command=self._clear_highlight_teams,
+            state="disabled",
+        )
+        self._clear_highlight_btn.pack(side="left", padx=(0, 6))
+        self._update_preview_btn = ttk.Button(
+            buttons, text="Update Preview", command=self._on_update_preview,
+            state="disabled",
+        )
+        self._update_preview_btn.pack(side="left")
+
     # ---- Display Options ----------------------------------------------
 
     def _build_display_options(self, parent: ttk.Frame) -> None:
@@ -254,33 +293,116 @@ class RankingsTab(ttk.Frame):
         self._fetching = True
         self._fetch_btn.config(state="disabled")
         self._refresh_btn.config(state="disabled")
+        self._update_preview_btn.config(state="disabled")
         self._status_label.config(text="Fetching…", foreground="#555555")
-        threading.Thread(target=self._fetch_thread, args=(bypass_cache,),
+        self._clear_highlight_btn.config(state="disabled")
+        request = (
+            self._get_int(self._season_var, 0),
+            self._get_int(self._week_var, 0),
+            self._poll_var.get(),
+            self._season_type_var.get(),
+            self.settings.cfbd_api_key,
+            self.settings.data_cache_ttl_minutes,
+        )
+        threading.Thread(target=self._fetch_thread, args=(bypass_cache, *request),
                          daemon=True).start()
 
-    def _fetch_thread(self, bypass_cache: bool) -> None:
+    def _fetch_thread(
+        self, bypass_cache: bool, season: int, week: int, poll: str,
+        season_type: str, key: str, ttl: int,
+    ) -> None:
         try:
             from app.data.rankings_api import fetch_rankings, fetch_rankings_cached
-            from app.cards.rankings_card import RankingsCardConfig, RankingsCardRenderer
-
-            season      = self._get_int(self._season_var, 0)
-            week        = self._get_int(self._week_var, 0)
-            poll        = self._poll_var.get()
-            season_type = self._season_type_var.get()
-            key         = self.settings.cfbd_api_key
-            ttl         = self.settings.data_cache_ttl_minutes
 
             if bypass_cache:
                 block = fetch_rankings(season, week, poll, season_type, key)
             else:
                 block = fetch_rankings_cached(season, week, poll, season_type, key, ttl)
+            self.after(0, lambda b=block: self._on_data_fetched(b, None))
+        except Exception as exc:
+            logger.exception("Rankings fetch failed")
+            msg = str(exc)
+            self.after(0, lambda m=msg: self._on_data_fetched(None, m))
 
-            config   = self._build_card_config()
-            renderer = RankingsCardRenderer()
-            image    = renderer.render(block, config, self.settings.working_dir)
+    def _on_data_fetched(
+        self, block: Optional[RankingsBlock], error: Optional[str],
+    ) -> None:
+        if error:
+            self._on_fetch_done(None, error)
+            return
+        if block is None:
+            self._on_fetch_done(None, "No rankings data was returned.")
+            return
+        self._current_block = block
+        self._refresh_highlight_teams(
+            [entry.team_name for entry in block.entries],
+        )
+        self._start_render(block)
+
+    def _refresh_highlight_teams(self, team_names: list[str]) -> None:
+        selected = {name.casefold() for name in self._selected_highlight_teams()}
+        self._highlight_listbox.delete(0, tk.END)
+        for index, name in enumerate(sorted(team_names, key=str.casefold)):
+            self._highlight_listbox.insert(tk.END, name)
+            if name.casefold() in selected:
+                self._highlight_listbox.selection_set(index)
+        self._highlight_status.config(
+            text=f"{len(team_names)} teams in the current poll. Select none, one, or many.",
+        )
+        self._clear_highlight_btn.config(
+            state="normal" if team_names else "disabled",
+        )
+
+    def _selected_highlight_teams(self) -> tuple[str, ...]:
+        return tuple(
+            self._highlight_listbox.get(index)
+            for index in self._highlight_listbox.curselection()
+        )
+
+    def _clear_highlight_teams(self) -> None:
+        self._highlight_listbox.selection_clear(0, tk.END)
+        self._on_update_preview()
+
+    def _on_update_preview(self) -> None:
+        if self._current_block is None or self._fetching:
+            return
+        self._fetching = True
+        self._fetch_btn.config(state="disabled")
+        self._refresh_btn.config(state="disabled")
+        self._update_preview_btn.config(state="disabled")
+        self._status_label.config(text="Rendering preview…", foreground="#555555")
+        self._start_render(self._current_block)
+
+    def _start_render(self, block: RankingsBlock) -> None:
+        self._highlight_listbox.config(state="disabled")
+        self._clear_highlight_btn.config(state="disabled")
+        config = self._build_card_config()
+        selected_teams = self._selected_highlight_teams()
+        api_key = self.settings.cfbd_api_key
+        threading.Thread(
+            target=self._render_thread,
+            args=(block, config, selected_teams, api_key),
+            daemon=True,
+        ).start()
+
+    def _render_thread(
+        self, block: RankingsBlock, config, selected_teams: tuple[str, ...],
+        api_key: str,
+    ) -> None:
+        try:
+            from app.cards.rankings_card import RankingsCardRenderer
+            from app.data.teams_api import get_team_highlight_colors
+
+            config.highlight_colors = {
+                name.casefold(): get_team_highlight_colors(name, api_key)
+                for name in selected_teams
+            }
+            image = RankingsCardRenderer().render(
+                block, config, self.settings.working_dir,
+            )
             self.after(0, lambda: self._on_fetch_done(image, None))
         except Exception as exc:
-            logger.exception("Rankings fetch/render failed")
+            logger.exception("Rankings render failed")
             msg = str(exc)
             self.after(0, lambda m=msg: self._on_fetch_done(None, m))
 
@@ -288,6 +410,13 @@ class RankingsTab(ttk.Frame):
         self._fetching = False
         self._fetch_btn.config(state="normal")
         self._refresh_btn.config(state="normal")
+        self._highlight_listbox.config(state="normal")
+        self._clear_highlight_btn.config(
+            state="normal" if self._highlight_listbox.size() else "disabled",
+        )
+        self._update_preview_btn.config(
+            state="normal" if self._current_block is not None else "disabled",
+        )
         if error:
             self._status_label.config(text=error, foreground="#aa2200")
             return

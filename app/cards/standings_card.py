@@ -1,7 +1,7 @@
 """Standings card renderer for CFB Stat Card Maker."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from PIL import Image, ImageDraw
@@ -82,6 +82,7 @@ class StandingsCardConfig(CardConfig):
     div_header_fg: str = "#FFFFFF"
     text_color: str    = "#111111"
     footer_color: str  = "#888888"
+    highlight_colors: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -132,9 +133,19 @@ class StandingsCardRenderer:
         y += header_h
 
         for i, entry in enumerate(entries):
-            row_bg = config.row_color if i % 2 == 0 else config.row_alt_color
+            highlight = config.highlight_colors.get(entry.team_name.casefold())
+            row_bg = (
+                highlight[0] if highlight
+                else config.row_color if i % 2 == 0 else config.row_alt_color
+            )
+            text_color = highlight[1] if highlight else config.text_color
+            rank_color = text_color if highlight else config.footer_color
             draw.rectangle([0, y, W - 1, y + row_h - 1], fill=row_bg)
-            self._draw_row(draw, img, entry, cols, col_widths, config, y, row_h, working_dir, rank=i + 1)
+            self._draw_row(
+                draw, img, entry, cols, col_widths, config, y, row_h,
+                working_dir, rank=i + 1, text_color=text_color,
+                rank_color=rank_color,
+            )
             y += row_h
 
         if has_footer:
@@ -252,7 +263,9 @@ class StandingsCardRenderer:
 
     # ------------------------------------------------------------------
 
-    def _draw_row(self, draw, img, entry, cols, col_widths, config, y, row_h, working_dir, rank: int = 0):
+    def _draw_row(self, draw, img, entry, cols, col_widths, config, y, row_h,
+                  working_dir, rank: int = 0, text_color: str = "#111111",
+                  rank_color: str = "#888888"):
         font_sz   = max(8, round(row_h * 0.48))
         font      = get_font(font_sz)
         font_bold = get_font(font_sz, bold=True)
@@ -269,7 +282,7 @@ class StandingsCardRenderer:
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                 tx = col_x + (col_w - tw) // 2
                 ty = y + (row_h - th) // 2
-                draw.text((tx, ty), val, font=font, fill=config.footer_color)
+                draw.text((tx, ty), val, font=font, fill=rank_color)
             elif col == "TEAM":
                 logo_offset = 0
                 if config.show_logos:
@@ -284,13 +297,13 @@ class StandingsCardRenderer:
                 bbox = draw.textbbox((0, 0), val, font=font_bold)
                 ty   = y + (row_h - (bbox[3] - bbox[1])) // 2
                 draw.text((col_x + self.CELL_PAD_X + logo_offset, ty),
-                          val, font=font_bold, fill=config.text_color)
+                          val, font=font_bold, fill=text_color)
             else:
                 bbox = draw.textbbox((0, 0), val, font=font)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                 tx = col_x + col_w - tw - self.CELL_PAD_X
                 ty = y + (row_h - th) // 2
-                draw.text((tx, ty), val, font=font, fill=config.text_color)
+                draw.text((tx, ty), val, font=font, fill=text_color)
                 # Vertical divider (skip after RK — it has no divider; draw for all stat cols)
                 draw.line([(col_x, y), (col_x, y + row_h - 1)],
                           fill=config.divider_color, width=1)

@@ -79,6 +79,12 @@ def get_team_colors(team_name: str, api_key: str) -> tuple[str, str]:
     return "#1a3a5c", "#2c5f8a"
 
 
+def get_team_highlight_colors(team_name: str, api_key: str) -> tuple[str, str]:
+    """Return a team's primary color and a contrasting foreground color."""
+    primary, _ = get_team_colors(team_name, api_key)
+    return primary, _auto_fg(primary)
+
+
 def apply_team_colors(palette: dict, primary: str, secondary: str) -> dict:
     """Return an updated palette dict with team colors applied.
 

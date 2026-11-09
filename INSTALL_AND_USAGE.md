@@ -73,8 +73,9 @@ The GUI opens. On first launch, go to the **Settings** tab and paste your CFBD A
 2. Select the **Conference** (e.g., `SEC`) and **Season** year.
 3. Toggle **Show Logos** and choose **Column Mode** (`standard` or `extended` — extended adds conference record, PF, PA, and streak).
 4. Adjust card width/height in inches if needed (extended columns display better at 7.5"+ wide).
-5. Click **Generate** — a preview appears on the right.
-6. Click **Export** to save the image to your output directory.
+5. Click **Fetch & Preview** to load the standings and show the card.
+6. Under **Highlight Teams**, Ctrl/Shift-click any teams in the loaded standings list, then click **Update Preview**. Leave the list unselected for no highlights; selected rows use each team's primary color with contrasting text. **Clear** removes all selections.
+7. Click **Export** to save the image to your output directory.
 
 **Example:** Set conference to `Big Ten`, season to `2024`, column mode to `extended` at 8×5 inches → one card with every team's full record and current win/loss streak.
 
@@ -88,7 +89,9 @@ The GUI opens. On first launch, go to the **Settings** tab and paste your CFBD A
 2. Choose **Poll** (`AP Top 25`, `Coaches Poll`, `CFP Rankings`, or `AFCA Coaches`).
 3. Select the **Season** and **Week**.
 4. Enable **Show Rank Badges** — gold/silver/bronze badges appear on the top 3 teams.
-5. Click **Generate**, then **Export**.
+5. Click **Fetch & Preview** to load the poll and show the card.
+6. Under **Highlight Teams**, Ctrl/Shift-click any teams in the loaded poll list, then click **Update Preview**. Leave the list unselected for no highlights; selected rows use each team's primary color with contrasting text. **Clear** removes all selections.
+7. Click **Export**.
 
 **Example:** Set poll to `CFP Rankings`, week to `12`, enable rank badges → a 25-row card with seed badges and first-place vote counts for every ranked team.
 

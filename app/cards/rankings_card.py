@@ -1,7 +1,7 @@
 """Rankings card renderer for CFB Stat Card Maker."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from PIL import Image, ImageDraw
@@ -78,6 +78,7 @@ class RankingsCardConfig(CardConfig):
     divider_color: str = "#CCCCCC"
     text_color: str    = "#111111"
     footer_color: str  = "#888888"
+    highlight_colors: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +129,17 @@ class RankingsCardRenderer:
         y += header_h
 
         for i, entry in enumerate(entries):
-            row_bg = config.row_color if i % 2 == 0 else config.row_alt_color
+            highlight = config.highlight_colors.get(entry.team_name.casefold())
+            row_bg = (
+                highlight[0] if highlight
+                else config.row_color if i % 2 == 0 else config.row_alt_color
+            )
+            text_color = highlight[1] if highlight else config.text_color
             draw.rectangle([0, y, W - 1, y + row_h - 1], fill=row_bg)
-            self._draw_row(draw, img, entry, cols, col_widths, config, y, row_h, working_dir)
+            self._draw_row(
+                draw, img, entry, cols, col_widths, config,
+                y, row_h, working_dir, text_color,
+            )
             y += row_h
 
         if has_footer:
@@ -227,7 +236,8 @@ class RankingsCardRenderer:
 
     # ------------------------------------------------------------------
 
-    def _draw_row(self, draw, img, entry, cols, col_widths, config, y, row_h, working_dir):
+    def _draw_row(self, draw, img, entry, cols, col_widths, config, y, row_h,
+                  working_dir, text_color):
         font_sz   = max(8, round(row_h * 0.48))
         font      = get_font(font_sz)
         font_bold = get_font(font_sz, bold=True)
@@ -239,7 +249,7 @@ class RankingsCardRenderer:
 
             if col == "RANK":
                 self._draw_rank_cell(draw, entry.rank, config,
-                                     col_x, col_w, y, row_h, font_sz)
+                                     col_x, col_w, y, row_h, font_sz, text_color)
             elif col == "TEAM":
                 logo_offset = 0
                 if config.show_logos:
@@ -253,25 +263,26 @@ class RankingsCardRenderer:
                 bbox = draw.textbbox((0, 0), entry.team_name, font=font_bold)
                 ty = y + (row_h - (bbox[3] - bbox[1])) // 2
                 draw.text((col_x + self.CELL_PAD_X + logo_offset, ty),
-                          entry.team_name, font=font_bold, fill=config.text_color)
+                          entry.team_name, font=font_bold, fill=text_color)
             else:
                 val = self._get_value(entry, col)
                 bbox = draw.textbbox((0, 0), val, font=font)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                 tx = col_x + col_w - tw - self.CELL_PAD_X
                 ty = y + (row_h - th) // 2
-                draw.text((tx, ty), val, font=font, fill=config.text_color)
+                draw.text((tx, ty), val, font=font, fill=text_color)
                 draw.line([(col_x, y), (col_x, y + row_h - 1)],
                           fill=config.divider_color, width=1)
 
         draw.line([(0, y + row_h - 1), (config.width_px - 1, y + row_h - 1)],
                   fill=config.divider_color, width=1)
 
-    def _draw_rank_cell(self, draw, rank, config, col_x, col_w, y, row_h, font_sz):
+    def _draw_rank_cell(self, draw, rank, config, col_x, col_w, y, row_h,
+                        font_sz, text_color):
         badge_sz = round(row_h * 0.62)
         cx = col_x + self.CELL_PAD_X + badge_sz // 2
         cy = y + row_h // 2
-        if rank in _BADGE_COLORS:
+        if config.show_rank_badges and rank in _BADGE_COLORS:
             r = badge_sz // 2
             draw.ellipse([cx - r, cy - r, cx + r, cy + r],
                          fill=_BADGE_COLORS[rank], outline=_BADGE_OUTLINE[rank])
@@ -286,12 +297,12 @@ class RankingsCardRenderer:
             tb = draw.textbbox((0, 0), text, font=font)
             tx = col_x + self.CELL_PAD_X
             ty = y + (row_h - (tb[3] - tb[1])) // 2
-            draw.text((tx, ty), text, font=font, fill=config.text_color)
+            draw.text((tx, ty), text, font=font, fill=text_color)
 
     def _get_value(self, entry: RankingEntry, col: str) -> str:
         return {
             "CONF":   entry.conference or "—",
-            "RECORD": "—",       # poll data doesn't include record; can be enriched later
+            "RECORD": entry.record,
             "POINTS": str(entry.points) if entry.points else "—",
             "1ST":    str(entry.first_place_votes) if entry.first_place_votes else "—",
         }.get(col, "")

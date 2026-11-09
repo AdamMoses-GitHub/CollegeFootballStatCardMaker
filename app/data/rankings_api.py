@@ -42,6 +42,7 @@ class RankingEntry:
     conference: str
     first_place_votes: int
     points: int
+    record: str = "—"
 
 
 @dataclass
@@ -127,6 +128,14 @@ def fetch_rankings(
         ))
 
     entries.sort(key=lambda e: e.rank)
+    _enrich_records(
+        entries,
+        effective_season,
+        actual_week,
+        season_type,
+        api_client,
+        cfbd,
+    )
 
     return RankingsBlock(
         season=effective_season,
@@ -136,6 +145,73 @@ def fetch_rankings(
         as_of=datetime.datetime.now(),
         entries=entries,
     )
+
+
+def _enrich_records(
+    entries: list[RankingEntry],
+    season: int,
+    week: int,
+    season_type: str,
+    api_client,
+    cfbd,
+) -> None:
+    """Set each ranked team's season record as of the selected poll week."""
+    games_api = cfbd.GamesApi(api_client)
+    try:
+        regular_games = games_api.get_games(
+            year=season,
+            season_type=cfbd.SeasonType.REGULAR,
+        ) or []
+        postseason_games = []
+        if season_type == "postseason":
+            postseason_games = games_api.get_games(
+                year=season,
+                season_type=cfbd.SeasonType.POSTSEASON,
+            ) or []
+    except Exception as exc:
+        raise api_error(exc, "cfbd API error fetching records for rankings")
+
+    records: dict[str, list[int]] = {
+        entry.team_name.casefold(): [0, 0, 0] for entry in entries
+    }
+
+    for game in regular_games:
+        if season_type == "regular" and (game.week or 0) > week:
+            continue
+        _add_game_result(game, records)
+
+    for game in postseason_games:
+        if (game.week or 0) > week:
+            continue
+        _add_game_result(game, records)
+
+    for entry in entries:
+        wins, losses, ties = records[entry.team_name.casefold()]
+        entry.record = f"{wins}-{losses}" + (f"-{ties}" if ties else "")
+
+
+def _add_game_result(game, records: dict[str, list[int]]) -> None:
+    if not game.completed or game.home_points is None or game.away_points is None:
+        return
+
+    home_record = records.get((game.home_team or "").casefold())
+    away_record = records.get((game.away_team or "").casefold())
+
+    if game.home_points > game.away_points:
+        if home_record is not None:
+            home_record[0] += 1
+        if away_record is not None:
+            away_record[1] += 1
+    elif game.home_points < game.away_points:
+        if home_record is not None:
+            home_record[1] += 1
+        if away_record is not None:
+            away_record[0] += 1
+    else:
+        if home_record is not None:
+            home_record[2] += 1
+        if away_record is not None:
+            away_record[2] += 1
 
 
 # ---------------------------------------------------------------------------

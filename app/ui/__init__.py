@@ -25,16 +25,32 @@ def make_scrollable_left_panel(pw: ttk.PanedWindow, width: int = 290) -> ttk.Fra
     inner = ttk.Frame(canvas)
     win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
 
-    inner.bind("<Configure>",
-               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.bind("<Configure>",
-                lambda e: canvas.itemconfig(win_id, width=e.width))
+    def _update_scroll_region(event: tk.Event | None = None) -> None:
+        bounds = canvas.bbox("all")
+        if bounds is None:
+            return
+        canvas.configure(scrollregion=bounds)
+        needs_scrollbar = bounds[3] - bounds[1] > canvas.winfo_height()
+        if needs_scrollbar and not scrollbar.winfo_manager():
+            scrollbar.pack(side="right", fill="y")
+        elif not needs_scrollbar and scrollbar.winfo_manager():
+            scrollbar.pack_forget()
+            canvas.yview_moveto(0)
+
+    inner.bind("<Configure>", _update_scroll_region)
+
+    def _on_canvas_configure(event: tk.Event) -> None:
+        canvas.itemconfig(win_id, width=event.width)
+        _update_scroll_region()
+
+    canvas.bind("<Configure>", _on_canvas_configure)
 
     def _on_mousewheel(event: tk.Event) -> None:
-        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        first, last = canvas.yview()
+        if first > 0 or last < 1:
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     inner.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
     inner.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
     return inner
-
